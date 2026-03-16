@@ -425,12 +425,15 @@ export class MultiRepoView extends ItemView {
     contentEl.addClass("git-extended");
 
     const header = contentEl.createDiv("git-extended__header");
-    const titleGroup = header.createDiv("git-extended__header-title-group");
+    const headerTopRow = header.createDiv("git-extended__header-top-row");
+    const titleGroup = headerTopRow.createDiv("git-extended__header-title-group");
     titleGroup.createEl("h2", {
       cls: "git-extended__title",
       text: "Multi Repo Git"
     });
-    const headerSummary = titleGroup.createDiv("git-extended__repo-summary");
+    const headerSummary = headerTopRow.createDiv(
+      "git-extended__repo-summary git-extended__repo-summary--header"
+    );
     for (const item of getGlobalSummaryItems(state.repositories)) {
       const chip = headerSummary.createDiv("git-extended__summary-chip");
       chip.createSpan({ cls: "git-extended__summary-chip-label", text: item.label });
