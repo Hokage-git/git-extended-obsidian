@@ -1,12 +1,13 @@
 {
   "name": "git-extended-obsidian",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Obsidian plugin for working with multiple nested Git repositories inside one vault.",
   "main": "main.js",
   "scripts": {
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
-    "test": "vitest run --pool=threads --poolOptions.threads.singleThread"
+    "test": "vitest run --pool=threads --poolOptions.threads.singleThread",
+    "package:release": "node scripts/package-release.mjs"
   },
   "keywords": [
     "obsidian",
