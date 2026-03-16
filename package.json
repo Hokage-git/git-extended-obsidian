@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node esbuild.config.mjs production",
     "dev": "node esbuild.config.mjs",
-    "test": "vitest run"
+    "test": "vitest run --pool=threads --poolOptions.threads.singleThread"
   },
   "keywords": [
     "obsidian",
