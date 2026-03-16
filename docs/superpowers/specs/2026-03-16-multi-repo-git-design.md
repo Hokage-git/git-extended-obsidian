@@ -1,7 +1,7 @@
 # Multi Repo Git Obsidian Plugin Design
 
 **Date:** 2026-03-16
-**Status:** Draft approved in chat, written to file for final review
+**Status:** Updated after UX redesign approval in chat
 
 ## Goal
 
@@ -15,7 +15,9 @@ The first version is intentionally narrow:
 - Uses system `git` available in `PATH`
 - Auto-discovers repositories by scanning for `.git` directories inside the current vault
 - Shows each repository as a separate unit in a dedicated sidebar view
-- Supports per-repository `status`, `stage`, `unstage`, `commit`, `pull`, and `push`
+- Supports per-repository `status`, `stage`, `unstage`, `commit`, `pull`, `push`, and full discard
+- Supports file-level discard and global discard across all discovered repositories
+- Supports collapsible repository cards with compact headers
 
 Out of scope for v1:
 
@@ -36,14 +38,22 @@ Each repository is rendered as its own card containing:
 
 - Relative path inside the vault
 - Current branch
-- Summary of changes
+- Compact summary of staged, changed, and untracked counts
 - Separate sections for staged, unstaged, and untracked files
-- Per-file `Stage` or `Unstage` controls
+- Per-file hover actions for `Stage` or `Unstage`
+- Per-file `Discard` action
 - Commit message input
-- `Commit`, `Pull`, and `Push` buttons
+- `Commit`, `Pull`, `Push`, and `Discard Repo` actions
 - Repository-local loading and error state
+- Collapsed or expanded state
+
+The whole view also contains global actions:
+
+- `Refresh`
+- `Discard All`
 
 Repositories with no changes remain visible in a compact clean state so the user can still pull or push them independently.
+Clean repositories should default to collapsed. Repositories with visible changes should default to expanded when loaded or refreshed.
 
 ## Architecture
 
@@ -82,6 +92,8 @@ Supported operations:
 - Read branch and status
 - Stage one file
 - Unstage one file
+- Discard one file back to current `HEAD`
+- Discard one repository back to current `HEAD`
 - Commit with message
 - Pull
 - Push
@@ -94,6 +106,10 @@ Other commands:
 
 - `git add -- <path>`
 - `git restore --staged -- <path>`
+- `git restore --staged --worktree -- <path>` for tracked file discard
+- deleting untracked files on file discard
+- `git reset --hard HEAD` for repository discard
+- `git clean -fd` for repository discard of untracked files
 - `git commit -m <message>`
 - `git pull`
 - `git push`
@@ -109,6 +125,8 @@ Responsible for:
 - Refreshing all repositories manually
 - Refreshing only one repository after a repo-local operation
 - Preventing concurrent conflicting operations for the same repository
+- Running global discard sequentially across repositories
+- Storing repo UI state such as collapsed or expanded status
 
 This can be implemented as a lightweight controller rather than a formal store for v1.
 
@@ -145,6 +163,7 @@ Responsible for:
 - `commitMessage: string`
 - `isLoading: boolean`
 - `isBusy: boolean`
+- `isExpanded: boolean`
 - `lastError?: string`
 
 ## Status Parsing
@@ -169,6 +188,7 @@ Top-level view contains:
 
 - Header with title
 - `Refresh` action
+- `Discard All` action
 - Scrollable list of repository cards
 
 ### Repository Card Layout
@@ -176,6 +196,8 @@ Top-level view contains:
 Each card contains:
 
 - Repo path and branch
+- Collapse toggle
+- Compact summary badges
 - Optional inline error banner
 - `Staged` section
 - `Changes` section
@@ -188,14 +210,21 @@ Each card contains:
 - `Commit` is disabled when commit message is empty
 - `Commit` is disabled when there are no staged changes
 - `Pull`, `Push`, and `Commit` disable the card while running
+- `Discard` actions also disable the relevant card while running
 - `Stage` and `Unstage` refresh only the affected repository on success
+- File-level `Discard` refreshes only the affected repository on success
+- Repository-level `Discard Repo` refreshes only the affected repository on success
 - Global refresh updates all repositories
+- `Discard All` iterates across all repositories after a single confirmation modal
+- All discard actions must use confirmation modals
+- File row actions stay hidden until hover or focus
 
 ### Empty States
 
 - If no repositories are found, the view shows a clear empty state
 - If a repository is clean, its file sections collapse into a minimal clean summary
 - If Git is missing, the entire view shows one global blocking error
+- If a repository is collapsed, only the compact header is shown
 
 ## Error Handling
 
@@ -211,6 +240,7 @@ Global blocking error is used only for environment-level failures:
 Repository-local errors are shown inline on the corresponding card:
 
 - command failure on `pull`, `push`, or `commit`
+- command failure on file or repository discard
 - permission issues
 - malformed repository state
 
@@ -257,6 +287,11 @@ Manual verification should cover at minimum:
 - Failed commit due to empty message
 - Failed push due to remote/auth error
 - Failed pull due to merge conflict
+- File discard on tracked file
+- File discard on untracked file
+- Repository discard with mixed staged and untracked files
+- Global discard across multiple repositories
+- Collapsed and expanded repo behavior after refresh
 
 ## Implementation Notes
 

@@ -34,6 +34,7 @@ export interface RepoState {
   commitMessage: string;
   isLoading: boolean;
   isBusy: boolean;
+  isExpanded: boolean;
   lastError?: string;
 }
 
@@ -42,4 +43,26 @@ export interface GitCommandResult<T = void> {
   stdout: string;
   stderr: string;
   data?: T;
+}
+
+export type RepoOperationKind = "pull" | "push";
+
+export interface RepoOperationResult {
+  operation: RepoOperationKind;
+  repoRoot: string;
+  ok: boolean;
+  error?: string;
+}
+
+export interface BulkOperationResult {
+  operation: RepoOperationKind;
+  successCount: number;
+  failureCount: number;
+}
+
+export interface ControllerState {
+  gitAvailable: boolean;
+  isLoading: boolean;
+  repositories: RepoState[];
+  error?: string;
 }

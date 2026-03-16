@@ -40,6 +40,8 @@ Notes:
 - `src/discovery/repo-discovery-service.ts` owns recursive scan logic only.
 - `src/controller/multi-repo-controller.ts` owns loading, repo-local refresh, and busy-state rules.
 - `src/ui/multi-repo-view.ts` owns rendering and event wiring only.
+- `src/ui/repo-view-model.ts` owns compact display helpers, summary badges, and commit placeholders.
+- `src/ui/confirm-modal.ts` owns confirmation UX for destructive discard flows.
 
 ## Chunk 1: Scaffold Plugin Project
 
@@ -631,6 +633,7 @@ Add short notes under this task if implementation behavior differs from the orig
 - Windows path handling is critical because the current environment is Windows. Normalize separators at boundaries and avoid direct string assumptions in tests.
 - Nested repositories can be numerous in a large vault. Keep discovery simple in v1, but structure it so exclusions can be added later.
 - `git restore --staged` may fail in edge cases on older Git versions. If compatibility becomes a problem, fall back to `git reset HEAD -- <path>`.
+- `discard` is destructive. Every file, repo, and global discard path must require explicit modal confirmation and be backed by command-composition tests before wiring UI actions.
 
 ## Execution Order
 
@@ -640,3 +643,157 @@ Add short notes under this task if implementation behavior differs from the orig
 4. Add the Obsidian view and plugin entry.
 5. Add styling.
 6. Run automated and manual verification.
+
+## Chunk 9: Compact UX, Discard, and Collapsible Repositories
+
+### Task 10: Add discard command coverage and git-service support
+
+**Files:**
+- Modify: `src/git/git-service.ts`
+- Modify: `src/types.ts`
+- Modify: `tests/git/git-service.test.ts`
+
+- [ ] **Step 1: Write failing discard tests**
+
+Cover:
+
+- tracked file discard uses `git restore --staged --worktree -- <path>`
+- untracked file discard deletes the file directly
+- repository discard runs `git reset --hard HEAD`
+- repository discard runs `git clean -fd`
+
+- [ ] **Step 2: Run discard tests to verify failure**
+
+Run:
+
+```bash
+npm test -- tests/git/git-service.test.ts
+```
+
+Expected: FAIL because discard methods do not exist yet.
+
+- [ ] **Step 3: Implement discard methods in `src/git/git-service.ts`**
+
+Add:
+
+- `discardFile(repoRoot, filePath, tracked)`
+- `discardRepo(repoRoot)`
+
+- [ ] **Step 4: Run discard tests**
+
+Run:
+
+```bash
+npm test -- tests/git/git-service.test.ts
+```
+
+Expected: PASS
+
+### Task 11: Add controller support for discard and collapse state
+
+**Files:**
+- Modify: `src/controller/multi-repo-controller.ts`
+- Modify: `src/types.ts`
+- Modify: `tests/controller/multi-repo-controller.test.ts`
+
+- [ ] **Step 1: Write failing controller tests**
+
+Cover:
+
+- dirty repositories default to expanded
+- clean repositories default to collapsed
+- toggling a repository changes only that repository
+- file discard refreshes the affected repository
+- repository discard refreshes the affected repository
+- global discard iterates all repositories
+
+- [ ] **Step 2: Run controller tests to verify failure**
+
+Run:
+
+```bash
+npm test -- tests/controller/multi-repo-controller.test.ts
+```
+
+Expected: FAIL because discard and expansion logic do not exist yet.
+
+- [ ] **Step 3: Implement controller behavior**
+
+Add:
+
+- `toggleRepoExpanded(repoRoot)`
+- `discardFile(repoRoot, filePath, tracked)`
+- `discardRepo(repoRoot)`
+- `discardAll()`
+
+- [ ] **Step 4: Run controller tests**
+
+Run:
+
+```bash
+npm test -- tests/controller/multi-repo-controller.test.ts
+```
+
+Expected: PASS
+
+### Task 12: Redesign view for compact accordion layout and discard actions
+
+**Files:**
+- Modify: `src/ui/multi-repo-view.ts`
+- Modify: `src/ui/repo-view-model.ts`
+- Create: `src/ui/confirm-modal.ts`
+- Modify: `styles.css`
+- Modify: `main.ts`
+- Modify: `tests/ui/repo-view-model.test.ts`
+
+- [ ] **Step 1: Write failing view-model tests for compact summary**
+
+Cover:
+
+- summary badge counts
+- discard button labeling helpers if needed
+- clean-state collapse helpers
+
+- [ ] **Step 2: Run view-model tests to verify failure**
+
+Run:
+
+```bash
+npm test -- tests/ui/repo-view-model.test.ts
+```
+
+Expected: FAIL because compact accordion helpers are incomplete.
+
+- [ ] **Step 3: Implement compact accordion UI**
+
+Include:
+
+- global `Discard All`
+- repo-level `Discard Repo`
+- collapsible repo headers
+- compact summary badges
+- per-file hover `Discard`
+- confirmation modals for all discard paths
+
+- [ ] **Step 4: Run build and test verification**
+
+Run:
+
+```bash
+npm run build
+npm test
+```
+
+Expected: PASS
+
+- [ ] **Step 5: Reinstall plugin into target vault**
+
+Copy:
+
+- `manifest.json`
+- `main.js`
+- `styles.css`
+
+into:
+
+- `C:\Users\Макс\Documents\UMKA\.obsidian\plugins\git-extended-obsidian`

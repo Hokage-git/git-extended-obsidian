@@ -1,0 +1,228 @@
+.git-extended {
+  padding: 0 10px 10px;
+  overflow-y: auto;
+}
+
+.git-extended__header,
+.git-extended__repo-header,
+.git-extended__file-row,
+.git-extended__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.git-extended__header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  margin: 0 -10px 10px;
+  padding: 8px 10px 10px;
+  background: color-mix(in srgb, var(--background-primary) 92%, transparent);
+  border-bottom: 1px solid var(--background-modifier-border);
+  backdrop-filter: blur(8px);
+}
+
+.git-extended__header-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.git-extended__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.git-extended__title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.git-extended__repo-card {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 8px;
+  background: var(--background-secondary);
+}
+
+.git-extended__repo-header {
+  align-items: center;
+  cursor: pointer;
+  gap: 10px;
+}
+
+.git-extended__repo-header-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.git-extended__repo-meta {
+  min-width: 0;
+}
+
+.git-extended__repo-toggle {
+  color: var(--text-muted);
+  width: 12px;
+}
+
+.git-extended__repo-path {
+  font-weight: 600;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.git-extended__repo-branch,
+.git-extended__empty-hint,
+.git-extended__clean-state {
+  color: var(--text-muted);
+  font-size: 0.82em;
+}
+
+.git-extended__repo-summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.git-extended__summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.git-extended__summary-chip-value {
+  color: var(--text-normal);
+  font-weight: 600;
+}
+
+.git-extended__repo-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.git-extended__section {
+  margin-top: 8px;
+}
+
+.git-extended__section-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.git-extended__file-row {
+  position: relative;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--background-modifier-border-hover);
+}
+
+.git-extended__file-row:last-child {
+  border-bottom: none;
+}
+
+.git-extended__file-badge {
+  flex: 0 0 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.git-extended__file-badge--modified {
+  background: color-mix(in srgb, var(--color-orange) 22%, transparent);
+  color: var(--color-orange);
+}
+
+.git-extended__file-badge--untracked {
+  background: color-mix(in srgb, var(--color-green) 22%, transparent);
+  color: var(--color-green);
+}
+
+.git-extended__file-badge--renamed {
+  background: color-mix(in srgb, var(--color-cyan) 22%, transparent);
+  color: var(--color-cyan);
+}
+
+.git-extended__file-badge--deleted,
+.git-extended__file-badge--conflict {
+  background: color-mix(in srgb, var(--color-red) 22%, transparent);
+  color: var(--color-red);
+}
+
+.git-extended__file-path {
+  flex: 1;
+  word-break: break-word;
+  min-width: 0;
+}
+
+.git-extended__file-actions {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  display: flex;
+  gap: 4px;
+}
+
+.git-extended__file-row:hover .git-extended__file-actions,
+.git-extended__file-row:focus-within .git-extended__file-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.git-extended__repo-error,
+.git-extended__global-error {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-red) 14%, transparent);
+  color: var(--text-error);
+}
+
+.git-extended__empty-state {
+  color: var(--text-muted);
+  padding: 16px 0;
+}
+
+.git-extended__button {
+  white-space: nowrap;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.git-extended__icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+}
+
+.git-extended__actions {
+  margin-top: 8px;
+  justify-content: flex-start;
+}
+
+.git-extended__commit-setting {
+  margin-top: 8px;
+}
