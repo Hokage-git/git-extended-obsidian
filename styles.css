@@ -8,8 +8,6 @@
 .git-extended__file-row,
 .git-extended__actions {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
   gap: 8px;
 }
 
@@ -55,7 +53,7 @@
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  justify-content: flex-start;
+  justify-content: flex-end;
   padding-top: 2px;
 }
 
@@ -80,9 +78,18 @@
 }
 
 .git-extended__repo-header {
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   cursor: pointer;
   gap: 10px;
+}
+
+.git-extended__repo-header-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
 }
 
 .git-extended__repo-header-main {
@@ -90,11 +97,13 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .git-extended__repo-meta {
   min-width: 0;
+  overflow: hidden;
 }
 
 .git-extended__repo-toggle {
@@ -105,7 +114,10 @@
 .git-extended__repo-path {
   font-weight: 600;
   line-height: 1.2;
-  word-break: break-word;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .git-extended__repo-branch,
@@ -123,11 +135,15 @@
 
 .git-extended__repo-summary--header {
   display: flex;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   min-width: 0;
-  max-width: 58%;
+}
+
+.git-extended__repo-summary--repo {
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .git-extended__summary-chip {
@@ -157,6 +173,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .git-extended__section {
@@ -174,12 +193,18 @@
 
 .git-extended__file-row {
   position: relative;
+  align-items: center;
+  justify-content: space-between;
   padding: 4px 0;
   border-bottom: 1px solid var(--background-modifier-border-hover);
 }
 
 .git-extended__file-row:last-child {
   border-bottom: none;
+}
+
+.git-extended__file-row--static {
+  cursor: default;
 }
 
 .git-extended__file-badge {
@@ -191,6 +216,13 @@
   justify-content: center;
   font-size: 11px;
   font-weight: 700;
+}
+
+.git-extended__file-badge--wide {
+  flex-basis: auto;
+  min-width: 54px;
+  padding: 0 6px;
+  text-transform: lowercase;
 }
 
 .git-extended__file-badge--modified {
@@ -237,10 +269,25 @@
 .git-extended__repo-error,
 .git-extended__global-error {
   margin-top: 6px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
   padding: 6px 8px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--color-red) 14%, transparent);
   color: var(--text-error);
+}
+
+.git-extended__error-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.git-extended__error-dismiss {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
 }
 
 .git-extended__empty-state {
@@ -265,6 +312,7 @@
 
 .git-extended__actions {
   margin-top: 8px;
+  align-items: center;
   justify-content: flex-start;
 }
 
@@ -279,17 +327,18 @@
     padding: 8px 10px 10px;
   }
 
-  .git-extended__header-top-row {
+  .git-extended__header-top-row,
+  .git-extended__repo-header-top-row {
     align-items: flex-start;
     gap: 8px;
   }
 
   .git-extended__repo-summary--header {
     justify-content: flex-start;
-    max-width: 50%;
   }
 
-  .git-extended__header-actions {
+  .git-extended__header-actions,
+  .git-extended__repo-header-actions {
     gap: 4px;
   }
 

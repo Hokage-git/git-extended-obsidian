@@ -2,6 +2,7 @@ import type {
   BulkOperationResult,
   ControllerState,
   GitCommandResult,
+  PulledFileChange,
   PullResultData,
   RepoOperationKind,
   RepoOperationResult,
@@ -42,6 +43,7 @@ function createRepoState(repo: RepoInfo): RepoState {
     staged: [],
     unstaged: [],
     untracked: [],
+    lastPulledChanges: [],
     commitMessage: "",
     isLoading: false,
     isBusy: false,
@@ -180,6 +182,17 @@ export function createMultiRepoController({
 
     await refreshRepo(repoRoot);
     return result;
+  }
+
+  function setLastPulledChanges(repoRoot: string, changes: PulledFileChange[]): void {
+    setState({
+      ...state,
+      repositories: state.repositories.map((repoState) =>
+        repoState.repo.rootPath === repoRoot
+          ? { ...repoState, lastPulledChanges: changes }
+          : repoState
+      )
+    });
   }
 
   function toRepoOperationResult(
@@ -387,10 +400,15 @@ export function createMultiRepoController({
     },
 
     async pull(repoRoot: string): Promise<RepoOperationResult> {
+      const result = await runRepoMutation(repoRoot, () => gitService.pull(repoRoot));
+      if (result.ok) {
+        setLastPulledChanges(repoRoot, result.data?.status === "pulled" ? result.data.files : []);
+      }
+
       return toRepoOperationResult(
         "pull",
         repoRoot,
-        await runRepoMutation(repoRoot, () => gitService.pull(repoRoot))
+        result
       );
     },
 

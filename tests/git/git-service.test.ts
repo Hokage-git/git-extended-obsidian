@@ -107,7 +107,7 @@ describe("createGitService", () => {
       .mockResolvedValueOnce({
         exitCode: 0,
         stderr: "",
-        stdout: "Updating abc123..def456"
+        stdout: ["Updating abc123..def456", "A\tnew-file.md", "M\texisting.ts", "D\tremoved.md"].join("\n")
       });
 
     const service = createGitService(runner);
@@ -116,10 +116,16 @@ describe("createGitService", () => {
     expect(runner).toHaveBeenNthCalledWith(4, "C:/vault/repo", [
       "-c",
       "core.quotepath=false",
-      "pull"
+      "pull",
+      "--name-status"
     ]);
     expect(result.ok).toBe(true);
     expect(result.data?.status).toBe("pulled");
+    expect(result.data?.files).toEqual([
+      { path: "new-file.md", kind: "new" },
+      { path: "existing.ts", kind: "updated" },
+      { path: "removed.md", kind: "deleted" }
+    ]);
   });
 
   it("discards tracked files with restore staged and worktree", async () => {

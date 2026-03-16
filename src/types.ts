@@ -19,6 +19,13 @@ export interface RepoFileChange {
   kind: RepoChangeKind;
 }
 
+export type PulledChangeKind = "new" | "updated" | "deleted";
+
+export interface PulledFileChange {
+  path: string;
+  kind: PulledChangeKind;
+}
+
 export interface RepoStatusSnapshot {
   branch: string;
   staged: RepoFileChange[];
@@ -31,6 +38,7 @@ export interface RepoState {
   staged: RepoFileChange[];
   unstaged: RepoFileChange[];
   untracked: RepoFileChange[];
+  lastPulledChanges: PulledFileChange[];
   commitMessage: string;
   isLoading: boolean;
   isBusy: boolean;
@@ -50,6 +58,7 @@ export type RepoOperationStatus = "completed" | "pulled" | "upToDate" | "failed"
 
 export interface PullResultData {
   status: "pulled" | "upToDate";
+  files: PulledFileChange[];
 }
 
 export interface RepoOperationResult {

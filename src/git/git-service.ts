@@ -4,7 +4,12 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { parseStatusPorcelain } from "./status-parser";
-import type { GitCommandResult, PullResultData, RepoStatusSnapshot } from "../types";
+import type {
+  GitCommandResult,
+  PulledFileChange,
+  PullResultData,
+  RepoStatusSnapshot
+} from "../types";
 
 const execFileAsync = promisify(execFile);
 
@@ -69,6 +74,23 @@ function toCommandResult<T>(
 
 function withDefaultGitConfig(args: string[]): string[] {
   return ["-c", "core.quotepath=false", ...args];
+}
+
+function parsePullNameStatus(output: string): PulledFileChange[] {
+  const changes: PulledFileChange[] = [];
+
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^([AMD])\t(.+)$/);
+    if (!match) {
+      continue;
+    }
+
+    const [, status, filePath] = match;
+    const kind = status === "A" ? "new" : status === "M" ? "updated" : "deleted";
+    changes.push({ path: filePath, kind });
+  }
+
+  return changes;
 }
 
 export function createGitService(
@@ -138,15 +160,17 @@ export function createGitService(
           stdout: fetchResult.stdout,
           stderr: "",
           data: {
-            status: "upToDate"
+            status: "upToDate",
+            files: []
           }
         };
       }
 
-      return toCommandResult(
-        await runner(repoRoot, withDefaultGitConfig(["pull"])),
-        { status: "pulled" }
-      );
+      const pullResult = await runner(repoRoot, withDefaultGitConfig(["pull", "--name-status"]));
+      return toCommandResult(pullResult, {
+        status: "pulled",
+        files: pullResult.exitCode === 0 ? parsePullNameStatus(pullResult.stdout) : []
+      });
     },
 
     async push(repoRoot: string): Promise<GitCommandResult> {

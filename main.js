@@ -55,6 +55,7 @@ function createRepoState(repo) {
     staged: [],
     unstaged: [],
     untracked: [],
+    lastPulledChanges: [],
     commitMessage: "",
     isLoading: false,
     isBusy: false,
@@ -169,6 +170,14 @@ function createMultiRepoController({
     }
     await refreshRepo(repoRoot);
     return result;
+  }
+  function setLastPulledChanges(repoRoot, changes) {
+    setState({
+      ...state,
+      repositories: state.repositories.map(
+        (repoState) => repoState.repo.rootPath === repoRoot ? { ...repoState, lastPulledChanges: changes } : repoState
+      )
+    });
   }
   function toRepoOperationResult(operation, repoRoot, result) {
     const repoState = state.repositories.find((repo) => repo.repo.rootPath === repoRoot);
@@ -330,10 +339,14 @@ function createMultiRepoController({
       return result;
     },
     async pull(repoRoot) {
+      const result = await runRepoMutation(repoRoot, () => gitService.pull(repoRoot));
+      if (result.ok) {
+        setLastPulledChanges(repoRoot, result.data?.status === "pulled" ? result.data.files : []);
+      }
       return toRepoOperationResult(
         "pull",
         repoRoot,
-        await runRepoMutation(repoRoot, () => gitService.pull(repoRoot))
+        result
       );
     },
     async pullAll() {
@@ -501,6 +514,19 @@ function toCommandResult(runResult, data) {
 function withDefaultGitConfig(args) {
   return ["-c", "core.quotepath=false", ...args];
 }
+function parsePullNameStatus(output) {
+  const changes = [];
+  for (const line of output.split(/\r?\n/)) {
+    const match = line.match(/^([AMD])\t(.+)$/);
+    if (!match) {
+      continue;
+    }
+    const [, status, filePath] = match;
+    const kind = status === "A" ? "new" : status === "M" ? "updated" : "deleted";
+    changes.push({ path: filePath, kind });
+  }
+  return changes;
+}
 function createGitService(runner = defaultRunner, dependencies = {}) {
   const deletePath = dependencies.deletePath ?? ((targetPath) => (0, import_promises2.rm)(targetPath, { force: true, recursive: true }));
   return {
@@ -555,14 +581,16 @@ function createGitService(runner = defaultRunner, dependencies = {}) {
           stdout: fetchResult.stdout,
           stderr: "",
           data: {
-            status: "upToDate"
+            status: "upToDate",
+            files: []
           }
         };
       }
-      return toCommandResult(
-        await runner(repoRoot, withDefaultGitConfig(["pull"])),
-        { status: "pulled" }
-      );
+      const pullResult = await runner(repoRoot, withDefaultGitConfig(["pull", "--name-status"]));
+      return toCommandResult(pullResult, {
+        status: "pulled",
+        files: pullResult.exitCode === 0 ? parsePullNameStatus(pullResult.stdout) : []
+      });
     },
     async push(repoRoot) {
       return toCommandResult(await runner(repoRoot, withDefaultGitConfig(["push"])));
@@ -758,6 +786,20 @@ function formatDetailedBulkOperationNotice(operation, details) {
   }).join("\n");
 }
 
+// src/ui/error-visibility.ts
+function syncDismissibleErrorState(current, message) {
+  if (!message) {
+    return void 0;
+  }
+  if (!current || current.message !== message) {
+    return {
+      message,
+      dismissed: false
+    };
+  }
+  return current;
+}
+
 // src/ui/repo-actions.ts
 var GLOBAL_REPO_ACTIONS = [
   "refresh",
@@ -787,6 +829,7 @@ function getActionIcon(action) {
 // src/ui/multi-repo-view.ts
 var MULTI_REPO_VIEW_TYPE = "multi-repo-git-view";
 var AUTO_REFRESH_INTERVAL_MS = 6e4;
+var ERROR_AUTO_DISMISS_MS = 2e4;
 function createIconButton(parent, icon, label, disabled, onClick) {
   const button = parent.createEl("button", {
     cls: "git-extended__icon-button"
@@ -846,11 +889,44 @@ function renderFileList(view, container, title, files, actionLabel, isBusy, trac
     ).addClass("mod-warning");
   }
 }
+function getPulledChangeBadge(change) {
+  if (change.kind === "new") {
+    return { label: "new", tone: "untracked" };
+  }
+  if (change.kind === "deleted") {
+    return { label: "deleted", tone: "deleted" };
+  }
+  return { label: "updated", tone: "modified" };
+}
+function renderPulledFileList(container, title, files) {
+  if (files.length === 0) {
+    return;
+  }
+  const section = container.createDiv("git-extended__section");
+  section.createEl("div", {
+    cls: "git-extended__section-title",
+    text: `${title} (${files.length})`
+  });
+  for (const file of files) {
+    const row = section.createDiv("git-extended__file-row git-extended__file-row--static");
+    const badge = getPulledChangeBadge(file);
+    row.createDiv({
+      cls: `git-extended__file-badge git-extended__file-badge--${badge.tone} git-extended__file-badge--wide`,
+      text: badge.label
+    });
+    row.createDiv({
+      cls: "git-extended__file-path",
+      text: file.path
+    });
+  }
+}
 var MultiRepoView = class extends import_obsidian2.ItemView {
   constructor(leaf, controller) {
     super(leaf);
     this.controller = controller;
     this.isAutoRefreshing = false;
+    this.repoErrorStates = /* @__PURE__ */ new Map();
+    this.repoErrorTimers = /* @__PURE__ */ new Map();
   }
   getViewType() {
     return MULTI_REPO_VIEW_TYPE;
@@ -871,6 +947,121 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
     if (this.autoRefreshTimer !== void 0) {
       window.clearInterval(this.autoRefreshTimer);
     }
+    if (this.globalErrorTimer !== void 0) {
+      window.clearTimeout(this.globalErrorTimer);
+    }
+    for (const timerId of this.repoErrorTimers.values()) {
+      window.clearTimeout(timerId);
+    }
+    this.repoErrorTimers.clear();
+  }
+  scheduleGlobalErrorDismiss(message) {
+    if (this.globalErrorTimer !== void 0) {
+      window.clearTimeout(this.globalErrorTimer);
+    }
+    this.globalErrorTimer = window.setTimeout(() => {
+      if (this.globalErrorState?.message !== message) {
+        return;
+      }
+      this.globalErrorState = {
+        ...this.globalErrorState,
+        dismissed: true
+      };
+      this.render(this.controller.getState());
+    }, ERROR_AUTO_DISMISS_MS);
+  }
+  scheduleRepoErrorDismiss(repoRoot, message) {
+    const existingTimer = this.repoErrorTimers.get(repoRoot);
+    if (existingTimer !== void 0) {
+      window.clearTimeout(existingTimer);
+    }
+    const timerId = window.setTimeout(() => {
+      const errorState = this.repoErrorStates.get(repoRoot);
+      if (!errorState || errorState.message !== message) {
+        return;
+      }
+      this.repoErrorStates.set(repoRoot, {
+        ...errorState,
+        dismissed: true
+      });
+      this.render(this.controller.getState());
+    }, ERROR_AUTO_DISMISS_MS);
+    this.repoErrorTimers.set(repoRoot, timerId);
+  }
+  syncErrorVisibility(state) {
+    const nextGlobal = syncDismissibleErrorState(this.globalErrorState, state.error);
+    if (nextGlobal?.message !== this.globalErrorState?.message && nextGlobal) {
+      this.scheduleGlobalErrorDismiss(nextGlobal.message);
+    }
+    this.globalErrorState = nextGlobal;
+    if (!state.error && this.globalErrorTimer !== void 0) {
+      window.clearTimeout(this.globalErrorTimer);
+      this.globalErrorTimer = void 0;
+    }
+    const activeRepoRoots = /* @__PURE__ */ new Set();
+    for (const repoState of state.repositories) {
+      const nextRepoError = syncDismissibleErrorState(
+        this.repoErrorStates.get(repoState.repo.rootPath),
+        repoState.lastError
+      );
+      const previousRepoError = this.repoErrorStates.get(repoState.repo.rootPath);
+      if (nextRepoError?.message !== previousRepoError?.message && nextRepoError) {
+        this.scheduleRepoErrorDismiss(repoState.repo.rootPath, nextRepoError.message);
+      }
+      if (nextRepoError) {
+        this.repoErrorStates.set(repoState.repo.rootPath, nextRepoError);
+        activeRepoRoots.add(repoState.repo.rootPath);
+      } else {
+        const timerId = this.repoErrorTimers.get(repoState.repo.rootPath);
+        if (timerId !== void 0) {
+          window.clearTimeout(timerId);
+          this.repoErrorTimers.delete(repoState.repo.rootPath);
+        }
+        this.repoErrorStates.delete(repoState.repo.rootPath);
+      }
+    }
+    for (const repoRoot of [...this.repoErrorStates.keys()]) {
+      if (activeRepoRoots.has(repoRoot)) {
+        continue;
+      }
+      const timerId = this.repoErrorTimers.get(repoRoot);
+      if (timerId !== void 0) {
+        window.clearTimeout(timerId);
+        this.repoErrorTimers.delete(repoRoot);
+      }
+      this.repoErrorStates.delete(repoRoot);
+    }
+  }
+  dismissGlobalError() {
+    if (!this.globalErrorState) {
+      return;
+    }
+    this.globalErrorState = {
+      ...this.globalErrorState,
+      dismissed: true
+    };
+    this.render(this.controller.getState());
+  }
+  dismissRepoError(repoRoot) {
+    const errorState = this.repoErrorStates.get(repoRoot);
+    if (!errorState) {
+      return;
+    }
+    this.repoErrorStates.set(repoRoot, {
+      ...errorState,
+      dismissed: true
+    });
+    this.render(this.controller.getState());
+  }
+  renderErrorBanner(parent, cls, message, onDismiss) {
+    const banner = parent.createDiv(cls);
+    banner.createDiv({
+      cls: "git-extended__error-text",
+      text: message
+    });
+    createIconButton(banner, "x", "Dismiss error", false, () => onDismiss()).addClass(
+      "git-extended__error-dismiss"
+    );
   }
   async confirmDiscard(title, message, action, onConfirm) {
     const confirmed = await new ConfirmModal(
@@ -1070,6 +1261,7 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
   render(state) {
     const { contentEl } = this;
     this.captureCommitInputState();
+    this.syncErrorVisibility(state);
     contentEl.empty();
     contentEl.addClass("git-extended");
     const header = contentEl.createDiv("git-extended__header");
@@ -1079,7 +1271,11 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
       cls: "git-extended__title",
       text: "Multi Repo Git"
     });
-    const headerSummary = headerTopRow.createDiv(
+    const headerActions = header.createDiv("git-extended__header-actions");
+    for (const action of GLOBAL_REPO_ACTIONS) {
+      this.createHeaderAction(headerActions, action, state);
+    }
+    const headerSummary = header.createDiv(
       "git-extended__repo-summary git-extended__repo-summary--header"
     );
     for (const item of getGlobalSummaryItems(state.repositories)) {
@@ -1087,22 +1283,22 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
       chip.createSpan({ cls: "git-extended__summary-chip-label", text: item.label });
       chip.createSpan({ cls: "git-extended__summary-chip-value", text: String(item.value) });
     }
-    const headerActions = header.createDiv("git-extended__header-actions");
-    for (const action of GLOBAL_REPO_ACTIONS) {
-      this.createHeaderAction(headerActions, action, state);
-    }
     if (!state.gitAvailable) {
-      contentEl.createDiv({
-        cls: "git-extended__global-error",
-        text: state.error ?? "Git binary not available."
-      });
+      this.renderErrorBanner(
+        contentEl,
+        "git-extended__global-error",
+        state.error ?? "Git binary not available.",
+        () => this.dismissGlobalError()
+      );
       return;
     }
-    if (state.error) {
-      contentEl.createDiv({
-        cls: "git-extended__global-error",
-        text: state.error
-      });
+    if (this.globalErrorState && !this.globalErrorState.dismissed) {
+      this.renderErrorBanner(
+        contentEl,
+        "git-extended__global-error",
+        this.globalErrorState.message,
+        () => this.dismissGlobalError()
+      );
     }
     if (state.repositories.length === 0) {
       contentEl.createDiv({
@@ -1117,7 +1313,8 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
       cardHeader.addEventListener("click", () => {
         this.controller.toggleRepoExpanded(repoState.repo.rootPath);
       });
-      const headerMain = cardHeader.createDiv("git-extended__repo-header-main");
+      const headerTopRow2 = cardHeader.createDiv("git-extended__repo-header-top-row");
+      const headerMain = headerTopRow2.createDiv("git-extended__repo-header-main");
       headerMain.createDiv({
         cls: "git-extended__repo-toggle",
         text: repoState.isExpanded ? "\u25BE" : "\u25B8"
@@ -1131,21 +1328,26 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
         cls: "git-extended__repo-branch",
         text: repoState.repo.branch || "unknown branch"
       });
-      const summary = cardHeader.createDiv("git-extended__repo-summary");
+      const headerActions2 = headerTopRow2.createDiv("git-extended__repo-header-actions");
+      for (const action of REPO_ACTIONS) {
+        this.createRepoHeaderAction(headerActions2, action, repoState);
+      }
+      const summary = cardHeader.createDiv(
+        "git-extended__repo-summary git-extended__repo-summary--repo"
+      );
       for (const item of getRepoSummaryItems(repoState)) {
         const chip = summary.createDiv("git-extended__summary-chip");
         chip.createSpan({ cls: "git-extended__summary-chip-label", text: item.label });
         chip.createSpan({ cls: "git-extended__summary-chip-value", text: String(item.value) });
       }
-      const headerActions2 = cardHeader.createDiv("git-extended__repo-header-actions");
-      for (const action of REPO_ACTIONS) {
-        this.createRepoHeaderAction(headerActions2, action, repoState);
-      }
-      if (repoState.lastError) {
-        card.createDiv({
-          cls: "git-extended__repo-error",
-          text: repoState.lastError
-        });
+      const repoErrorState = this.repoErrorStates.get(repoState.repo.rootPath);
+      if (repoErrorState && !repoErrorState.dismissed) {
+        this.renderErrorBanner(
+          card,
+          "git-extended__repo-error",
+          repoErrorState.message,
+          () => this.dismissRepoError(repoState.repo.rootPath)
+        );
       }
       if (!repoState.isExpanded) {
         continue;
@@ -1205,6 +1407,7 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
           )
         );
       }
+      renderPulledFileList(card, "Pulled changes", repoState.lastPulledChanges);
       new import_obsidian2.Setting(card).setClass("git-extended__commit-setting").setName("Commit message").addText((text) => {
         text.inputEl.dataset.repoRoot = repoState.repo.rootPath;
         text.setPlaceholder(getCommitPlaceholder(repoState)).setValue(repoState.commitMessage).onChange((value) => {

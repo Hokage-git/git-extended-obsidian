@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { GitCommandResult, RepoInfo, RepoStatusSnapshot } from "../../src/types";
+import type { GitCommandResult, PullResultData, RepoInfo, RepoStatusSnapshot } from "../../src/types";
 import { createMultiRepoController } from "../../src/controller/multi-repo-controller";
 
 function createStatus(branch: string, stagedCount = 0): RepoStatusSnapshot {
@@ -435,5 +435,125 @@ describe("createMultiRepoController", () => {
     await controller.commit("C:/vault/alpha");
 
     expect(commit).toHaveBeenCalledWith("C:/vault/alpha", "update: 2026-03-16 18:05");
+  });
+
+  it("stores pulled file changes for a repository after pull", async () => {
+    const repositories: RepoInfo[] = [
+      { branch: "", relativePath: "alpha", rootPath: "C:/vault/alpha" }
+    ];
+    const getStatus = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: createStatus("main", 0)
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: createStatus("main", 0)
+      });
+    const pull = vi.fn().mockResolvedValue({
+      ok: true,
+      stderr: "",
+      stdout: "",
+      data: {
+        status: "pulled",
+        files: [
+          { path: "new-file.md", kind: "new" },
+          { path: "existing.ts", kind: "updated" },
+          { path: "removed.md", kind: "deleted" }
+        ]
+      } satisfies PullResultData
+    });
+
+    const controller = createMultiRepoController({
+      discoverRepositories: vi.fn().mockResolvedValue(repositories),
+      gitService: {
+        checkGitAvailability: vi.fn().mockResolvedValue(true),
+        commit: vi.fn(),
+        discardFile: vi.fn(),
+        discardRepo: vi.fn(),
+        getStatus,
+        pull,
+        push: vi.fn(),
+        stageFile: vi.fn(),
+        unstageFile: vi.fn()
+      },
+      vaultPath: "C:/vault"
+    });
+
+    await controller.load();
+    await controller.pull("C:/vault/alpha");
+
+    expect(controller.getState().repositories[0]?.lastPulledChanges).toEqual([
+      { path: "new-file.md", kind: "new" },
+      { path: "existing.ts", kind: "updated" },
+      { path: "removed.md", kind: "deleted" }
+    ]);
+  });
+
+  it("clears pulled file changes when the next pull is up to date", async () => {
+    const repositories: RepoInfo[] = [
+      { branch: "", relativePath: "alpha", rootPath: "C:/vault/alpha" }
+    ];
+    const getStatus = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: createStatus("main", 0)
+      })
+      .mockResolvedValue({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: createStatus("main", 0)
+      });
+    const pull = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: {
+          status: "pulled",
+          files: [{ path: "existing.ts", kind: "updated" }]
+        } satisfies PullResultData
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: {
+          status: "upToDate",
+          files: []
+        } satisfies PullResultData
+      });
+
+    const controller = createMultiRepoController({
+      discoverRepositories: vi.fn().mockResolvedValue(repositories),
+      gitService: {
+        checkGitAvailability: vi.fn().mockResolvedValue(true),
+        commit: vi.fn(),
+        discardFile: vi.fn(),
+        discardRepo: vi.fn(),
+        getStatus,
+        pull,
+        push: vi.fn(),
+        stageFile: vi.fn(),
+        unstageFile: vi.fn()
+      },
+      vaultPath: "C:/vault"
+    });
+
+    await controller.load();
+    await controller.pull("C:/vault/alpha");
+    await controller.pull("C:/vault/alpha");
+
+    expect(controller.getState().repositories[0]?.lastPulledChanges).toEqual([]);
   });
 });
