@@ -1,0 +1,10 @@
+{
+  "id": "git-extended-obsidian",
+  "name": "Git Extended",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Manage multiple nested Git repositories from a dedicated Obsidian sidebar view.",
+  "author": "Hokage-git",
+  "authorUrl": "https://github.com/Hokage-git",
+  "isDesktopOnly": true
+}

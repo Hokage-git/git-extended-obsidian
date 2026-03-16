@@ -1,0 +1,26 @@
+{
+  "name": "git-extended-obsidian",
+  "version": "0.1.0",
+  "description": "Obsidian plugin for working with multiple nested Git repositories inside one vault.",
+  "main": "main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "git"
+  ],
+  "author": "Hokage-git",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "builtin-modules": "^5.0.0",
+    "esbuild": "^0.25.0",
+    "obsidian": "^1.8.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.1.0"
+  }
+}
