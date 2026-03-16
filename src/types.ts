@@ -46,11 +46,18 @@ export interface GitCommandResult<T = void> {
 }
 
 export type RepoOperationKind = "pull" | "push";
+export type RepoOperationStatus = "completed" | "pulled" | "upToDate" | "failed";
+
+export interface PullResultData {
+  status: "pulled" | "upToDate";
+}
 
 export interface RepoOperationResult {
   operation: RepoOperationKind;
   repoRoot: string;
+  repoPath?: string;
   ok: boolean;
+  status: RepoOperationStatus;
   error?: string;
 }
 
@@ -58,6 +65,7 @@ export interface BulkOperationResult {
   operation: RepoOperationKind;
   successCount: number;
   failureCount: number;
+  details: RepoOperationResult[];
 }
 
 export interface ControllerState {

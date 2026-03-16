@@ -3,6 +3,7 @@ import { ItemView, Notice, Setting, setIcon, type WorkspaceLeaf } from "obsidian
 import type {
   BulkOperationResult,
   ControllerState,
+  GitCommandResult,
   RepoFileChange,
   RepoOperationResult
 } from "../types";
@@ -14,7 +15,12 @@ import {
   shouldShowCleanState
 } from "./repo-view-model";
 import { ConfirmModal } from "./confirm-modal";
-import { formatBulkOperationNotice, formatRepoOperationNotice } from "./operation-notices";
+import { getConfirmActionLabel, type ConfirmActionKind } from "./confirm-labels";
+import {
+  formatBulkOperationNotice,
+  formatDetailedBulkOperationNotice,
+  formatRepoOperationNotice
+} from "./operation-notices";
 import {
   getActionIcon,
   GLOBAL_REPO_ACTIONS,
@@ -37,7 +43,7 @@ type MultiRepoController = {
   unstageFile(repoRoot: string, filePath: string): Promise<void>;
   discardFile(repoRoot: string, filePath: string, tracked: boolean): Promise<void>;
   discardRepo(repoRoot: string): Promise<void>;
-  commit(repoRoot: string): Promise<void>;
+  commit(repoRoot: string): Promise<GitCommandResult | undefined>;
   pull(repoRoot: string): Promise<RepoOperationResult>;
   push(repoRoot: string): Promise<RepoOperationResult>;
   setCommitMessage(repoRoot: string, value: string): void;
@@ -58,7 +64,6 @@ function createIconButton(
     cls: "git-extended__icon-button"
   });
   button.ariaLabel = label;
-  button.title = label;
   button.disabled = disabled;
   setIcon(button, icon);
   button.addEventListener("click", async (event) => {
@@ -133,6 +138,11 @@ export class MultiRepoView extends ItemView {
   private unsubscribe?: () => void;
   private autoRefreshTimer?: number;
   private isAutoRefreshing = false;
+  private commitInputState?: {
+    repoRoot: string;
+    selectionEnd: number | null;
+    selectionStart: number | null;
+  };
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -169,13 +179,14 @@ export class MultiRepoView extends ItemView {
   private async confirmDiscard(
     title: string,
     message: string,
+    action: ConfirmActionKind,
     onConfirm: () => Promise<void>
   ): Promise<void> {
     const confirmed = await new ConfirmModal(
       this.app,
       title,
       message,
-      "Discard"
+      getConfirmActionLabel(action)
     ).waitForDecision();
 
     if (!confirmed) {
@@ -211,16 +222,23 @@ export class MultiRepoView extends ItemView {
   }
 
   private showRepoOperationNotice(result: RepoOperationResult): void {
-    const repoState = this.controller
-      .getState()
-      .repositories.find((repo) => repo.repo.rootPath === result.repoRoot);
-    const repoPath = repoState?.repo.relativePath || ".";
     new Notice(
-      formatRepoOperationNotice(result.operation, repoPath, result.ok, result.error)
+      formatRepoOperationNotice(
+        result.operation,
+        result.repoPath || ".",
+        result.ok,
+        result.error,
+        result.status
+      )
     );
   }
 
   private showBulkOperationNotice(result: BulkOperationResult): void {
+    if (result.operation === "pull") {
+      new Notice(formatDetailedBulkOperationNotice("pull", result.details), 8000);
+      return;
+    }
+
     new Notice(
       formatBulkOperationNotice(
         result.operation,
@@ -228,6 +246,56 @@ export class MultiRepoView extends ItemView {
         result.failureCount
       )
     );
+  }
+
+  private showCommitNotice(repoRoot: string, result?: GitCommandResult): void {
+    if (!result) {
+      return;
+    }
+
+    const repoState = this.controller
+      .getState()
+      .repositories.find((repo) => repo.repo.rootPath === repoRoot);
+    const repoPath = repoState?.repo.relativePath || ".";
+    new Notice(result.ok ? `Committed ${repoPath}` : `Commit failed for ${repoPath}: ${result.stderr}`);
+  }
+
+  private captureCommitInputState(): void {
+    const activeElement = document.activeElement;
+    if (!(activeElement instanceof HTMLInputElement)) {
+      this.commitInputState = undefined;
+      return;
+    }
+
+    const repoRoot = activeElement.dataset.repoRoot;
+    if (!repoRoot) {
+      this.commitInputState = undefined;
+      return;
+    }
+
+    this.commitInputState = {
+      repoRoot,
+      selectionEnd: activeElement.selectionEnd,
+      selectionStart: activeElement.selectionStart
+    };
+  }
+
+  private restoreCommitInputState(inputEl: HTMLInputElement, repoRoot: string): void {
+    if (!this.commitInputState || this.commitInputState.repoRoot !== repoRoot) {
+      return;
+    }
+
+    inputEl.focus();
+    if (
+      this.commitInputState.selectionStart !== null &&
+      this.commitInputState.selectionEnd !== null
+    ) {
+      inputEl.setSelectionRange(
+        this.commitInputState.selectionStart,
+        this.commitInputState.selectionEnd
+      );
+    }
+    this.commitInputState = undefined;
   }
 
   private createHeaderAction(
@@ -243,6 +311,7 @@ export class MultiRepoView extends ItemView {
         await this.confirmDiscard(
           "Stage all repository changes?",
           "This will stage all unstaged and untracked files across every discovered repository.",
+          "stage",
           () => this.controller.stageAll()
         );
       },
@@ -250,6 +319,7 @@ export class MultiRepoView extends ItemView {
         await this.confirmDiscard(
           "Pull all repositories?",
           "This will run pull in every discovered repository one by one.",
+          "pull",
           async () => {
             this.showBulkOperationNotice(await this.controller.pullAll());
           }
@@ -262,6 +332,7 @@ export class MultiRepoView extends ItemView {
         await this.confirmDiscard(
           "Discard all repository changes?",
           "This will reset every discovered repository back to its current HEAD and remove untracked files.",
+          "discard",
           () => this.controller.discardAll()
         );
       }
@@ -325,6 +396,7 @@ export class MultiRepoView extends ItemView {
         await this.confirmDiscard(
           `Discard changes in ${state.repo.relativePath || "."}?`,
           "This will reset the repository to HEAD and remove untracked files.",
+          "discard",
           () => this.controller.discardRepo(repoRoot)
         );
       }
@@ -348,6 +420,7 @@ export class MultiRepoView extends ItemView {
 
   private render(state: ControllerState): void {
     const { contentEl } = this;
+    this.captureCommitInputState();
     contentEl.empty();
     contentEl.addClass("git-extended");
 
@@ -456,6 +529,7 @@ export class MultiRepoView extends ItemView {
             this.confirmDiscard(
               `Discard ${filePath}?`,
               "This will restore the file to HEAD and remove any local changes.",
+              "discard",
               () => this.controller.discardFile(repoState.repo.rootPath, filePath, tracked)
             )
         );
@@ -473,6 +547,7 @@ export class MultiRepoView extends ItemView {
             this.confirmDiscard(
               `Discard ${filePath}?`,
               "This will restore the file to HEAD and remove any local changes.",
+              "discard",
               () => this.controller.discardFile(repoState.repo.rootPath, filePath, tracked)
             )
         );
@@ -490,6 +565,7 @@ export class MultiRepoView extends ItemView {
             this.confirmDiscard(
               `Discard ${filePath}?`,
               "This will permanently remove the untracked file from disk.",
+              "discard",
               () => this.controller.discardFile(repoState.repo.rootPath, filePath, tracked)
             )
         );
@@ -499,6 +575,7 @@ export class MultiRepoView extends ItemView {
         .setClass("git-extended__commit-setting")
         .setName("Commit message")
         .addText((text) => {
+          text.inputEl.dataset.repoRoot = repoState.repo.rootPath;
           text
             .setPlaceholder(getCommitPlaceholder(repoState))
             .setValue(repoState.commitMessage)
@@ -507,15 +584,17 @@ export class MultiRepoView extends ItemView {
             });
 
           text.inputEl.disabled = repoState.isBusy;
+          this.restoreCommitInputState(text.inputEl, repoState.repo.rootPath);
         });
 
       const actions = card.createDiv("git-extended__actions");
       createIconButton(actions, "check", "Commit repository", repoState.isBusy, async () => {
-        await this.controller.commit(repoState.repo.rootPath);
+        this.showCommitNotice(
+          repoState.repo.rootPath,
+          await this.controller.commit(repoState.repo.rootPath)
+        );
       }).disabled =
-        repoState.isBusy ||
-        !repoState.commitMessage.trim() ||
-        repoState.staged.length === 0;
+        repoState.isBusy || repoState.staged.length === 0;
     }
   }
 }

@@ -15,6 +15,8 @@ describe("createGitService", () => {
     const result = await service.getStatus("C:/vault/repo");
 
     expect(runner).toHaveBeenCalledWith("C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
       "status",
       "--porcelain=v1",
       "-b"
@@ -39,6 +41,87 @@ describe("createGitService", () => {
     expect(result.stderr).toContain("remote rejected");
   });
 
+  it("checks remote commits before pulling and skips pull when already up to date", async () => {
+    const runner = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: ""
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "abc123\n"
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "abc123\n"
+      });
+
+    const service = createGitService(runner);
+    const result = await service.pull("C:/vault/repo");
+
+    expect(runner).toHaveBeenNthCalledWith(1, "C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
+      "fetch",
+      "--quiet"
+    ]);
+    expect(runner).toHaveBeenNthCalledWith(2, "C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
+      "rev-parse",
+      "HEAD"
+    ]);
+    expect(runner).toHaveBeenNthCalledWith(3, "C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
+      "rev-parse",
+      "@{u}"
+    ]);
+    expect(runner).toHaveBeenCalledTimes(3);
+    expect(result.ok).toBe(true);
+    expect(result.data?.status).toBe("upToDate");
+  });
+
+  it("passes through pull when remote has new commits", async () => {
+    const runner = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: ""
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "abc123\n"
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "def456\n"
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "Updating abc123..def456"
+      });
+
+    const service = createGitService(runner);
+    const result = await service.pull("C:/vault/repo");
+
+    expect(runner).toHaveBeenNthCalledWith(4, "C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
+      "pull"
+    ]);
+    expect(result.ok).toBe(true);
+    expect(result.data?.status).toBe("pulled");
+  });
+
   it("discards tracked files with restore staged and worktree", async () => {
     const runner = vi.fn().mockResolvedValue({
       exitCode: 0,
@@ -50,6 +133,8 @@ describe("createGitService", () => {
     const result = await service.discardFile("C:/vault/repo", "tracked.ts", true);
 
     expect(runner).toHaveBeenCalledWith("C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
       "restore",
       "--staged",
       "--worktree",
@@ -71,6 +156,25 @@ describe("createGitService", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("passes unicode file names to git without quote escaping", async () => {
+    const runner = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      stderr: "",
+      stdout: ""
+    });
+
+    const service = createGitService(runner);
+    await service.stageFile("C:/vault/repo", "Русский файл.md");
+
+    expect(runner).toHaveBeenCalledWith("C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
+      "add",
+      "--",
+      "Русский файл.md"
+    ]);
+  });
+
   it("discards a repository with reset hard and clean fd", async () => {
     const runner = vi
       .fn()
@@ -89,11 +193,18 @@ describe("createGitService", () => {
     const result = await service.discardRepo("C:/vault/repo");
 
     expect(runner).toHaveBeenNthCalledWith(1, "C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
       "reset",
       "--hard",
       "HEAD"
     ]);
-    expect(runner).toHaveBeenNthCalledWith(2, "C:/vault/repo", ["clean", "-fd"]);
+    expect(runner).toHaveBeenNthCalledWith(2, "C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
+      "clean",
+      "-fd"
+    ]);
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("HEAD is now at");
     expect(result.stdout).toContain("Removing note.md");

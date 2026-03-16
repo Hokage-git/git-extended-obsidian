@@ -11,14 +11,14 @@ describe("repo action order", () => {
     expect(getActionIcons(GLOBAL_REPO_ACTIONS)).toEqual([
       "refresh-cw",
       "plus",
-      "git-pull-request",
+      "download",
       "upload",
       "trash-2"
     ]);
     expect(getActionIcons(REPO_ACTIONS)).toEqual([
       "refresh-cw",
       "plus",
-      "git-pull-request",
+      "download",
       "upload",
       "trash-2"
     ]);

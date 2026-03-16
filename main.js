@@ -35,6 +35,19 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var import_obsidian3 = require("obsidian");
 
+// src/controller/commit-message.ts
+function pad(value) {
+  return String(value).padStart(2, "0");
+}
+function createAutoCommitMessage(date) {
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1);
+  const day = pad(date.getDate());
+  const hours = pad(date.getHours());
+  const minutes = pad(date.getMinutes());
+  return `update: ${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
 // src/controller/multi-repo-controller.ts
 function createRepoState(repo) {
   return {
@@ -69,6 +82,7 @@ function mergeStatus(repoState, status) {
 function createMultiRepoController({
   discoverRepositories: discoverRepositories2,
   gitService,
+  now = () => /* @__PURE__ */ new Date(),
   vaultPath
 }) {
   let state = {
@@ -157,18 +171,23 @@ function createMultiRepoController({
     return result;
   }
   function toRepoOperationResult(operation, repoRoot, result) {
+    const repoState = state.repositories.find((repo) => repo.repo.rootPath === repoRoot);
     return {
       operation,
       repoRoot,
+      repoPath: repoState?.repo.relativePath || ".",
       ok: result.ok,
+      status: !result.ok ? "failed" : operation === "pull" && result.data?.status === "upToDate" ? "upToDate" : operation === "pull" ? "pulled" : "completed",
       error: result.ok ? void 0 : result.stderr || "Git command failed."
     };
   }
   async function runBulkRepoOperation(operation, runner) {
     let successCount = 0;
     let failureCount = 0;
+    const details = [];
     for (const repository of state.repositories) {
       const result = await runner(repository.repo.rootPath);
+      details.push(result);
       if (result.ok) {
         successCount += 1;
       } else {
@@ -178,7 +197,8 @@ function createMultiRepoController({
     return {
       operation,
       successCount,
-      failureCount
+      failureCount,
+      details
     };
   }
   async function stageAllFilesForRepo(repoRoot) {
@@ -295,17 +315,19 @@ function createMultiRepoController({
       const repo = state.repositories.find(
         (repoState) => repoState.repo.rootPath === repoRoot
       );
-      if (!repo || !repo.commitMessage.trim()) {
-        return;
+      if (!repo || repo.staged.length === 0) {
+        return void 0;
       }
-      await runRepoMutation(
+      const message = repo.commitMessage.trim() || createAutoCommitMessage(now());
+      const result = await runRepoMutation(
         repoRoot,
-        () => gitService.commit(repoRoot, repo.commitMessage.trim())
+        () => gitService.commit(repoRoot, message)
       );
       const repositories = state.repositories.map(
         (repoState) => repoState.repo.rootPath === repoRoot ? { ...repoState, commitMessage: repoState.lastError ? repoState.commitMessage : "" } : repoState
       );
       setState({ ...state, repositories });
+      return result;
     },
     async pull(repoRoot) {
       return toRepoOperationResult(
@@ -476,36 +498,74 @@ function toCommandResult(runResult, data) {
     data
   };
 }
+function withDefaultGitConfig(args) {
+  return ["-c", "core.quotepath=false", ...args];
+}
 function createGitService(runner = defaultRunner, dependencies = {}) {
   const deletePath = dependencies.deletePath ?? ((targetPath) => (0, import_promises2.rm)(targetPath, { force: true, recursive: true }));
   return {
     async checkGitAvailability() {
-      const result = await runner(process.cwd(), ["--version"]);
+      const result = await runner(process.cwd(), withDefaultGitConfig(["--version"]));
       return result.exitCode === 0;
     },
     async getStatus(repoRoot) {
-      const result = await runner(repoRoot, ["status", "--porcelain=v1", "-b"]);
+      const result = await runner(
+        repoRoot,
+        withDefaultGitConfig(["status", "--porcelain=v1", "-b"])
+      );
       return toCommandResult(
         result,
         result.exitCode === 0 ? parseStatusPorcelain(result.stdout) : void 0
       );
     },
     async stageFile(repoRoot, filePath) {
-      return toCommandResult(await runner(repoRoot, ["add", "--", filePath]));
+      return toCommandResult(
+        await runner(repoRoot, withDefaultGitConfig(["add", "--", filePath]))
+      );
     },
     async unstageFile(repoRoot, filePath) {
       return toCommandResult(
-        await runner(repoRoot, ["restore", "--staged", "--", filePath])
+        await runner(
+          repoRoot,
+          withDefaultGitConfig(["restore", "--staged", "--", filePath])
+        )
       );
     },
     async commit(repoRoot, message) {
-      return toCommandResult(await runner(repoRoot, ["commit", "-m", message]));
+      return toCommandResult(
+        await runner(repoRoot, withDefaultGitConfig(["commit", "-m", message]))
+      );
     },
     async pull(repoRoot) {
-      return toCommandResult(await runner(repoRoot, ["pull"]));
+      const fetchResult = await runner(repoRoot, withDefaultGitConfig(["fetch", "--quiet"]));
+      if (fetchResult.exitCode !== 0) {
+        return toCommandResult(fetchResult);
+      }
+      const headResult = await runner(repoRoot, withDefaultGitConfig(["rev-parse", "HEAD"]));
+      if (headResult.exitCode !== 0) {
+        return toCommandResult(headResult);
+      }
+      const upstreamResult = await runner(repoRoot, withDefaultGitConfig(["rev-parse", "@{u}"]));
+      if (upstreamResult.exitCode !== 0) {
+        return toCommandResult(upstreamResult);
+      }
+      if (headResult.stdout.trim() === upstreamResult.stdout.trim()) {
+        return {
+          ok: true,
+          stdout: fetchResult.stdout,
+          stderr: "",
+          data: {
+            status: "upToDate"
+          }
+        };
+      }
+      return toCommandResult(
+        await runner(repoRoot, withDefaultGitConfig(["pull"])),
+        { status: "pulled" }
+      );
     },
     async push(repoRoot) {
-      return toCommandResult(await runner(repoRoot, ["push"]));
+      return toCommandResult(await runner(repoRoot, withDefaultGitConfig(["push"])));
     },
     async discardFile(repoRoot, filePath, tracked) {
       if (!tracked) {
@@ -525,15 +585,21 @@ function createGitService(runner = defaultRunner, dependencies = {}) {
         }
       }
       return toCommandResult(
-        await runner(repoRoot, ["restore", "--staged", "--worktree", "--", filePath])
+        await runner(
+          repoRoot,
+          withDefaultGitConfig(["restore", "--staged", "--worktree", "--", filePath])
+        )
       );
     },
     async discardRepo(repoRoot) {
-      const resetResult = await runner(repoRoot, ["reset", "--hard", "HEAD"]);
+      const resetResult = await runner(
+        repoRoot,
+        withDefaultGitConfig(["reset", "--hard", "HEAD"])
+      );
       if (resetResult.exitCode !== 0) {
         return toCommandResult(resetResult);
       }
-      const cleanResult = await runner(repoRoot, ["clean", "-fd"]);
+      const cleanResult = await runner(repoRoot, withDefaultGitConfig(["clean", "-fd"]));
       return {
         ok: cleanResult.exitCode === 0,
         stdout: [resetResult.stdout, cleanResult.stdout].filter(Boolean).join("\n"),
@@ -638,11 +704,38 @@ var ConfirmModal = class extends import_obsidian.Modal {
   }
 };
 
+// src/ui/confirm-labels.ts
+function getConfirmActionLabel(action) {
+  switch (action) {
+    case "pull":
+      return "Pull";
+    case "stage":
+      return "Stage";
+    default:
+      return "Discard";
+  }
+}
+
 // src/ui/operation-notices.ts
 function toPastTense(operation) {
   return operation === "pull" ? "Pulled" : "Pushed";
 }
-function formatRepoOperationNotice(operation, repoPath, success, error) {
+function toRepoOutcomeLabel(status) {
+  switch (status) {
+    case "upToDate":
+      return "already up to date";
+    case "pulled":
+      return "pulled";
+    case "completed":
+      return "completed";
+    default:
+      return "failed";
+  }
+}
+function formatRepoOperationNotice(operation, repoPath, success, error, status = success ? "completed" : "failed") {
+  if (operation === "pull" && status === "upToDate") {
+    return `${repoPath} is already up to date`;
+  }
   if (success) {
     return `${toPastTense(operation)} ${repoPath}`;
   }
@@ -651,6 +744,18 @@ function formatRepoOperationNotice(operation, repoPath, success, error) {
 function formatBulkOperationNotice(operation, successCount, failureCount) {
   const base = `${toPastTense(operation)} ${successCount} repositories`;
   return failureCount > 0 ? `${base}, ${failureCount} failed` : base;
+}
+function formatDetailedBulkOperationNotice(operation, details) {
+  return details.map((detail) => {
+    const repoPath = detail.repoPath || detail.repoRoot;
+    if (!detail.ok) {
+      return `${repoPath}: failed: ${detail.error ?? "Git command failed"}`;
+    }
+    if (operation === "pull") {
+      return `${repoPath}: ${toRepoOutcomeLabel(detail.status)}`;
+    }
+    return `${repoPath}: ${toPastTense(operation).toLowerCase()}`;
+  }).join("\n");
 }
 
 // src/ui/repo-actions.ts
@@ -671,7 +776,7 @@ var REPO_ACTIONS = [
 var ACTION_ICONS = {
   refresh: "refresh-cw",
   stageAll: "plus",
-  pull: "git-pull-request",
+  pull: "download",
   push: "upload",
   discard: "trash-2"
 };
@@ -687,7 +792,6 @@ function createIconButton(parent, icon, label, disabled, onClick) {
     cls: "git-extended__icon-button"
   });
   button.ariaLabel = label;
-  button.title = label;
   button.disabled = disabled;
   (0, import_obsidian2.setIcon)(button, icon);
   button.addEventListener("click", async (event) => {
@@ -768,12 +872,12 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
       window.clearInterval(this.autoRefreshTimer);
     }
   }
-  async confirmDiscard(title, message, onConfirm) {
+  async confirmDiscard(title, message, action, onConfirm) {
     const confirmed = await new ConfirmModal(
       this.app,
       title,
       message,
-      "Discard"
+      getConfirmActionLabel(action)
     ).waitForDecision();
     if (!confirmed) {
       return;
@@ -798,13 +902,21 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
     }, AUTO_REFRESH_INTERVAL_MS);
   }
   showRepoOperationNotice(result) {
-    const repoState = this.controller.getState().repositories.find((repo) => repo.repo.rootPath === result.repoRoot);
-    const repoPath = repoState?.repo.relativePath || ".";
     new import_obsidian2.Notice(
-      formatRepoOperationNotice(result.operation, repoPath, result.ok, result.error)
+      formatRepoOperationNotice(
+        result.operation,
+        result.repoPath || ".",
+        result.ok,
+        result.error,
+        result.status
+      )
     );
   }
   showBulkOperationNotice(result) {
+    if (result.operation === "pull") {
+      new import_obsidian2.Notice(formatDetailedBulkOperationNotice("pull", result.details), 8e3);
+      return;
+    }
     new import_obsidian2.Notice(
       formatBulkOperationNotice(
         result.operation,
@@ -812,6 +924,44 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
         result.failureCount
       )
     );
+  }
+  showCommitNotice(repoRoot, result) {
+    if (!result) {
+      return;
+    }
+    const repoState = this.controller.getState().repositories.find((repo) => repo.repo.rootPath === repoRoot);
+    const repoPath = repoState?.repo.relativePath || ".";
+    new import_obsidian2.Notice(result.ok ? `Committed ${repoPath}` : `Commit failed for ${repoPath}: ${result.stderr}`);
+  }
+  captureCommitInputState() {
+    const activeElement = document.activeElement;
+    if (!(activeElement instanceof HTMLInputElement)) {
+      this.commitInputState = void 0;
+      return;
+    }
+    const repoRoot = activeElement.dataset.repoRoot;
+    if (!repoRoot) {
+      this.commitInputState = void 0;
+      return;
+    }
+    this.commitInputState = {
+      repoRoot,
+      selectionEnd: activeElement.selectionEnd,
+      selectionStart: activeElement.selectionStart
+    };
+  }
+  restoreCommitInputState(inputEl, repoRoot) {
+    if (!this.commitInputState || this.commitInputState.repoRoot !== repoRoot) {
+      return;
+    }
+    inputEl.focus();
+    if (this.commitInputState.selectionStart !== null && this.commitInputState.selectionEnd !== null) {
+      inputEl.setSelectionRange(
+        this.commitInputState.selectionStart,
+        this.commitInputState.selectionEnd
+      );
+    }
+    this.commitInputState = void 0;
   }
   createHeaderAction(parent, action, state) {
     const handlers = {
@@ -822,6 +972,7 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
         await this.confirmDiscard(
           "Stage all repository changes?",
           "This will stage all unstaged and untracked files across every discovered repository.",
+          "stage",
           () => this.controller.stageAll()
         );
       },
@@ -829,6 +980,7 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
         await this.confirmDiscard(
           "Pull all repositories?",
           "This will run pull in every discovered repository one by one.",
+          "pull",
           async () => {
             this.showBulkOperationNotice(await this.controller.pullAll());
           }
@@ -841,6 +993,7 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
         await this.confirmDiscard(
           "Discard all repository changes?",
           "This will reset every discovered repository back to its current HEAD and remove untracked files.",
+          "discard",
           () => this.controller.discardAll()
         );
       }
@@ -895,6 +1048,7 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
         await this.confirmDiscard(
           `Discard changes in ${state.repo.relativePath || "."}?`,
           "This will reset the repository to HEAD and remove untracked files.",
+          "discard",
           () => this.controller.discardRepo(repoRoot)
         );
       }
@@ -915,6 +1069,7 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
   }
   render(state) {
     const { contentEl } = this;
+    this.captureCommitInputState();
     contentEl.empty();
     contentEl.addClass("git-extended");
     const header = contentEl.createDiv("git-extended__header");
@@ -1010,6 +1165,7 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
           (filePath, tracked) => this.confirmDiscard(
             `Discard ${filePath}?`,
             "This will restore the file to HEAD and remove any local changes.",
+            "discard",
             () => this.controller.discardFile(repoState.repo.rootPath, filePath, tracked)
           )
         );
@@ -1025,6 +1181,7 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
           (filePath, tracked) => this.confirmDiscard(
             `Discard ${filePath}?`,
             "This will restore the file to HEAD and remove any local changes.",
+            "discard",
             () => this.controller.discardFile(repoState.repo.rootPath, filePath, tracked)
           )
         );
@@ -1040,20 +1197,26 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
           (filePath, tracked) => this.confirmDiscard(
             `Discard ${filePath}?`,
             "This will permanently remove the untracked file from disk.",
+            "discard",
             () => this.controller.discardFile(repoState.repo.rootPath, filePath, tracked)
           )
         );
       }
       new import_obsidian2.Setting(card).setClass("git-extended__commit-setting").setName("Commit message").addText((text) => {
+        text.inputEl.dataset.repoRoot = repoState.repo.rootPath;
         text.setPlaceholder(getCommitPlaceholder(repoState)).setValue(repoState.commitMessage).onChange((value) => {
           this.controller.setCommitMessage(repoState.repo.rootPath, value);
         });
         text.inputEl.disabled = repoState.isBusy;
+        this.restoreCommitInputState(text.inputEl, repoState.repo.rootPath);
       });
       const actions = card.createDiv("git-extended__actions");
       createIconButton(actions, "check", "Commit repository", repoState.isBusy, async () => {
-        await this.controller.commit(repoState.repo.rootPath);
-      }).disabled = repoState.isBusy || !repoState.commitMessage.trim() || repoState.staged.length === 0;
+        this.showCommitNotice(
+          repoState.repo.rootPath,
+          await this.controller.commit(repoState.repo.rootPath)
+        );
+      }).disabled = repoState.isBusy || repoState.staged.length === 0;
     }
   }
 };

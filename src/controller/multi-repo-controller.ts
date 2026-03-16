@@ -2,12 +2,14 @@ import type {
   BulkOperationResult,
   ControllerState,
   GitCommandResult,
+  PullResultData,
   RepoOperationKind,
   RepoOperationResult,
   RepoInfo,
   RepoState,
   RepoStatusSnapshot
 } from "../types";
+import { createAutoCommitMessage } from "./commit-message";
 
 type GitService = {
   checkGitAvailability(): Promise<boolean>;
@@ -21,13 +23,14 @@ type GitService = {
   ): Promise<GitCommandResult>;
   discardRepo(repoRoot: string): Promise<GitCommandResult>;
   commit(repoRoot: string, message: string): Promise<GitCommandResult>;
-  pull(repoRoot: string): Promise<GitCommandResult>;
+  pull(repoRoot: string): Promise<GitCommandResult<PullResultData>>;
   push(repoRoot: string): Promise<GitCommandResult>;
 };
 
 type ControllerDependencies = {
   discoverRepositories(vaultPath: string): Promise<RepoInfo[]>;
   gitService: GitService;
+  now?: () => Date;
   vaultPath: string;
 };
 
@@ -73,6 +76,7 @@ function mergeStatus(repoState: RepoState, status: RepoStatusSnapshot): RepoStat
 export function createMultiRepoController({
   discoverRepositories,
   gitService,
+  now = () => new Date(),
   vaultPath
 }: ControllerDependencies) {
   let state: ControllerState = {
@@ -183,10 +187,19 @@ export function createMultiRepoController({
     repoRoot: string,
     result: GitCommandResult
   ): RepoOperationResult {
+    const repoState = state.repositories.find((repo) => repo.repo.rootPath === repoRoot);
     return {
       operation,
       repoRoot,
+      repoPath: repoState?.repo.relativePath || ".",
       ok: result.ok,
+      status: !result.ok
+        ? "failed"
+        : operation === "pull" && result.data?.status === "upToDate"
+          ? "upToDate"
+          : operation === "pull"
+            ? "pulled"
+            : "completed",
       error: result.ok ? undefined : result.stderr || "Git command failed."
     };
   }
@@ -197,9 +210,11 @@ export function createMultiRepoController({
   ): Promise<BulkOperationResult> {
     let successCount = 0;
     let failureCount = 0;
+    const details: RepoOperationResult[] = [];
 
     for (const repository of state.repositories) {
       const result = await runner(repository.repo.rootPath);
+      details.push(result);
       if (result.ok) {
         successCount += 1;
       } else {
@@ -210,7 +225,8 @@ export function createMultiRepoController({
     return {
       operation,
       successCount,
-      failureCount
+      failureCount,
+      details
     };
   }
 
@@ -347,16 +363,18 @@ export function createMultiRepoController({
       await runRepoMutation(repoRoot, () => gitService.unstageFile(repoRoot, filePath));
     },
 
-    async commit(repoRoot: string): Promise<void> {
+    async commit(repoRoot: string): Promise<GitCommandResult | undefined> {
       const repo = state.repositories.find(
         (repoState) => repoState.repo.rootPath === repoRoot
       );
-      if (!repo || !repo.commitMessage.trim()) {
-        return;
+      if (!repo || repo.staged.length === 0) {
+        return undefined;
       }
 
-      await runRepoMutation(repoRoot, () =>
-        gitService.commit(repoRoot, repo.commitMessage.trim())
+      const message = repo.commitMessage.trim() || createAutoCommitMessage(now());
+
+      const result = await runRepoMutation(repoRoot, () =>
+        gitService.commit(repoRoot, message)
       );
 
       const repositories = state.repositories.map((repoState) =>
@@ -365,6 +383,7 @@ export function createMultiRepoController({
           : repoState
       );
       setState({ ...state, repositories });
+      return result;
     },
 
     async pull(repoRoot: string): Promise<RepoOperationResult> {

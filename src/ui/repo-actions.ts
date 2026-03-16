@@ -19,7 +19,7 @@ export const REPO_ACTIONS: RepoActionId[] = [
 const ACTION_ICONS: Record<RepoActionId, string> = {
   refresh: "refresh-cw",
   stageAll: "plus",
-  pull: "git-pull-request",
+  pull: "download",
   push: "upload",
   discard: "trash-2"
 };
