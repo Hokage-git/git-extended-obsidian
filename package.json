@@ -1,5 +1,5 @@
 {
-  "name": "git-extended-obsidian",
+  "name": "git-extended-plugin",
   "version": "1.1.0",
   "description": "Obsidian plugin for working with multiple nested Git repositories inside one vault.",
   "main": "main.js",

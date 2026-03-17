@@ -12,7 +12,7 @@ describe("getManifestVersion", () => {
     expect(
       getManifestVersion(
         JSON.stringify({
-          id: "git-extended-obsidian",
+          id: "git-extended",
           version: "1.0.0"
         })
       )
@@ -20,7 +20,7 @@ describe("getManifestVersion", () => {
   });
 
   test("throws when version is missing", () => {
-    expect(() => getManifestVersion(JSON.stringify({ id: "git-extended-obsidian" }))).toThrow(
+    expect(() => getManifestVersion(JSON.stringify({ id: "git-extended" }))).toThrow(
       "manifest.json version is missing"
     );
   });
@@ -46,7 +46,7 @@ describe("validateReleaseTagRef", () => {
 
 describe("release packaging helpers", () => {
   test("returns the expected release archive name", () => {
-    expect(createReleaseArchiveName("1.0.0")).toBe("git-extended-obsidian-1.0.0.zip");
+    expect(createReleaseArchiveName("1.0.0")).toBe("git-extended-1.0.0.zip");
   });
 
   test("returns the expected release file names", () => {

@@ -24,7 +24,7 @@ export function validateReleaseTagRef(ref, version) {
 }
 
 export function createReleaseArchiveName(version) {
-  return `git-extended-obsidian-${version}.zip`;
+  return `git-extended-${version}.zip`;
 }
 
 export function getReleaseFileNames() {

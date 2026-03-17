@@ -12,7 +12,7 @@ Git Extended is an Obsidian plugin for working with multiple nested Git reposito
 ## Manual Installation
 
 1. Build the plugin with `npm run build`.
-2. Copy `main.js`, `manifest.json`, and `styles.css` into your vault at `.obsidian/plugins/git-extended-obsidian/`.
+2. Copy `main.js`, `manifest.json`, and `styles.css` into your vault at `.obsidian/plugins/git-extended/`.
 3. Reload Obsidian and enable **Git Extended** in community plugins.
 
 ## Development
@@ -50,8 +50,7 @@ GitHub Actions will then:
 - install dependencies;
 - verify that the pushed tag matches `manifest.json.version`;
 - run tests and build the plugin;
-- package `main.js`, `manifest.json`, and `styles.css` into `git-extended-obsidian-<version>.zip`;
-- publish that zip archive to the GitHub Release.
+- publish `main.js`, `manifest.json`, and `styles.css` as GitHub Release assets for Obsidian.
 
 You can also build the release archive locally after a production build:
 
