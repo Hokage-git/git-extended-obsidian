@@ -19,10 +19,12 @@ function createRepoState(overrides: Partial<RepoState> = {}): RepoState {
     staged: [],
     unstaged: [],
     untracked: [],
+    lastPulledChanges: [],
     commitMessage: "",
     isBusy: false,
     isExpanded: false,
     isLoading: false,
+    isSelected: true,
     ...overrides
   };
 }

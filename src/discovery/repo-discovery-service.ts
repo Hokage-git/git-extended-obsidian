@@ -15,10 +15,20 @@ async function scanDirectory(
   currentPath: string,
   results: string[]
 ): Promise<void> {
-  const entries = await readdir(currentPath, { withFileTypes: true });
-  const hasGitDirectory = entries.some(
-    (entry) => entry.isDirectory() && entry.name === ".git"
-  );
+  let entries;
+  try {
+    entries = await readdir(currentPath, { withFileTypes: true });
+  } catch (error) {
+    const code = typeof error === "object" && error && "code" in error
+      ? String(error.code)
+      : "";
+    if (code === "EACCES" || code === "EPERM" || code === "ENOENT") {
+      return;
+    }
+
+    throw error;
+  }
+  const hasGitDirectory = entries.some((entry) => entry.name === ".git");
 
   if (hasGitDirectory) {
     results.push(currentPath);

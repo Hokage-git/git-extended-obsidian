@@ -47,6 +47,7 @@ function createRepoState(repo: RepoInfo): RepoState {
     commitMessage: "",
     isLoading: false,
     isBusy: false,
+    isSelected: true,
     isExpanded: false
   };
 }
@@ -99,6 +100,11 @@ export function createMultiRepoController({
     emit();
   }
 
+  function getSelectedRepositories(): RepoState[] {
+    const selected = state.repositories.filter((repoState) => repoState.isSelected);
+    return selected.length > 0 ? selected : state.repositories;
+  }
+
   async function refreshRepo(repoRoot: string): Promise<void> {
     const repoIndex = state.repositories.findIndex(
       (repoState) => repoState.repo.rootPath === repoRoot
@@ -137,10 +143,10 @@ export function createMultiRepoController({
     });
   }
 
-  async function runRepoMutation(
+  async function runRepoMutation<T = void>(
     repoRoot: string,
-    action: () => Promise<GitCommandResult>
-  ): Promise<GitCommandResult> {
+    action: () => Promise<GitCommandResult<T>>
+  ): Promise<GitCommandResult<T>> {
     const repoIndex = state.repositories.findIndex(
       (repoState) => repoState.repo.rootPath === repoRoot
     );
@@ -149,7 +155,7 @@ export function createMultiRepoController({
         ok: false,
         stdout: "",
         stderr: "Repository not found."
-      };
+      } as GitCommandResult<T>;
     }
 
     const current = state.repositories[repoIndex];
@@ -158,7 +164,7 @@ export function createMultiRepoController({
         ok: false,
         stdout: "",
         stderr: "Repository is busy."
-      };
+      } as GitCommandResult<T>;
     }
 
     const repositories = [...state.repositories];
@@ -198,7 +204,7 @@ export function createMultiRepoController({
   function toRepoOperationResult(
     operation: RepoOperationKind,
     repoRoot: string,
-    result: GitCommandResult
+    result: GitCommandResult<PullResultData | void>
   ): RepoOperationResult {
     const repoState = state.repositories.find((repo) => repo.repo.rootPath === repoRoot);
     return {
@@ -225,7 +231,7 @@ export function createMultiRepoController({
     let failureCount = 0;
     const details: RepoOperationResult[] = [];
 
-    for (const repository of state.repositories) {
+    for (const repository of getSelectedRepositories()) {
       const result = await runner(repository.repo.rootPath);
       details.push(result);
       if (result.ok) {
@@ -341,7 +347,7 @@ export function createMultiRepoController({
     },
 
     async stageAll(): Promise<void> {
-      for (const repository of state.repositories) {
+      for (const repository of getSelectedRepositories()) {
         await stageAllFilesForRepo(repository.repo.rootPath);
       }
     },
@@ -361,7 +367,7 @@ export function createMultiRepoController({
     },
 
     async discardAll(): Promise<void> {
-      for (const repository of state.repositories) {
+      for (const repository of getSelectedRepositories()) {
         await runRepoMutation(repository.repo.rootPath, () =>
           gitService.discardRepo(repository.repo.rootPath)
         );
@@ -434,6 +440,17 @@ export function createMultiRepoController({
         repositories: state.repositories.map((repoState) =>
           repoState.repo.rootPath === repoRoot
             ? { ...repoState, commitMessage: value }
+            : repoState
+        )
+      });
+    },
+
+    setRepoSelected(repoRoot: string, isSelected: boolean): void {
+      setState({
+        ...state,
+        repositories: state.repositories.map((repoState) =>
+          repoState.repo.rootPath === repoRoot
+            ? { ...repoState, isSelected }
             : repoState
         )
       });

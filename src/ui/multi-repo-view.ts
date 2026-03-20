@@ -52,6 +52,7 @@ type MultiRepoController = {
   pull(repoRoot: string): Promise<RepoOperationResult>;
   push(repoRoot: string): Promise<RepoOperationResult>;
   setCommitMessage(repoRoot: string, value: string): void;
+  setRepoSelected(repoRoot: string, isSelected: boolean): void;
   toggleRepoExpanded(repoRoot: string): void;
 };
 
@@ -495,22 +496,26 @@ export class MultiRepoView extends ItemView {
     action: RepoActionId,
     state: ControllerState
   ): void {
+    const selectedCount = state.repositories.filter((repo) => repo.isSelected).length;
+    const bulkTargetLabel = selectedCount > 0
+      ? `${selectedCount} selected repositor${selectedCount === 1 ? "y" : "ies"}`
+      : "all discovered repositories";
     const handlers: Record<RepoActionId, () => Promise<void>> = {
       refresh: async () => {
         await this.controller.refreshAll();
       },
       stageAll: async () => {
         await this.confirmDiscard(
-          "Stage all repository changes?",
-          "This will stage all unstaged and untracked files across every discovered repository.",
+          "Stage selected repository changes?",
+          `This will stage all unstaged and untracked files across ${bulkTargetLabel}.`,
           "stage",
           () => this.controller.stageAll()
         );
       },
       pull: async () => {
         await this.confirmDiscard(
-          "Pull all repositories?",
-          "This will run pull in every discovered repository one by one.",
+          "Pull selected repositories?",
+          `This will run pull in ${bulkTargetLabel} one by one.`,
           "pull",
           async () => {
             this.showBulkOperationNotice(await this.controller.pullAll());
@@ -522,8 +527,8 @@ export class MultiRepoView extends ItemView {
       },
       discard: async () => {
         await this.confirmDiscard(
-          "Discard all repository changes?",
-          "This will reset every discovered repository back to its current HEAD and remove untracked files.",
+          "Discard selected repository changes?",
+          `This will reset ${bulkTargetLabel} back to their current HEAD and remove untracked files.`,
           "discard",
           () => this.controller.discardAll()
         );
@@ -632,6 +637,16 @@ export class MultiRepoView extends ItemView {
     const headerSummary = header.createDiv(
       "git-extended__repo-summary git-extended__repo-summary--header"
     );
+    const selectedCount = state.repositories.filter((repo) => repo.isSelected).length;
+    const totalCount = state.repositories.length;
+    const selectionChip = headerSummary.createDiv(
+      "git-extended__summary-chip git-extended__summary-chip--selection"
+    );
+    selectionChip.createSpan({ cls: "git-extended__summary-chip-label", text: "Selected" });
+    selectionChip.createSpan({
+      cls: "git-extended__summary-chip-value",
+      text: totalCount === 0 ? "0" : `${selectedCount}/${totalCount}`
+    });
     for (const item of getGlobalSummaryItems(state.repositories)) {
       const chip = headerSummary.createDiv("git-extended__summary-chip");
       chip.createSpan({ cls: "git-extended__summary-chip-label", text: item.label });
@@ -675,6 +690,19 @@ export class MultiRepoView extends ItemView {
       });
       const headerTopRow = cardHeader.createDiv("git-extended__repo-header-top-row");
       const headerMain = headerTopRow.createDiv("git-extended__repo-header-main");
+      const selectionToggle = headerMain.createEl("input", {
+        cls: "git-extended__repo-select",
+        type: "checkbox"
+      });
+      selectionToggle.checked = repoState.isSelected;
+      selectionToggle.disabled = repoState.isBusy;
+      selectionToggle.ariaLabel =
+        `Select ${repoState.repo.relativePath || "repository"} for bulk actions`;
+      selectionToggle.addEventListener("click", (event) => event.stopPropagation());
+      selectionToggle.addEventListener("change", (event) => {
+        event.stopPropagation();
+        this.controller.setRepoSelected(repoState.repo.rootPath, selectionToggle.checked);
+      });
       headerMain.createDiv({
         cls: "git-extended__repo-toggle",
         text: repoState.isExpanded ? "▾" : "▸"

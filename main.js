@@ -59,6 +59,7 @@ function createRepoState(repo) {
     commitMessage: "",
     isLoading: false,
     isBusy: false,
+    isSelected: true,
     isExpanded: false
   };
 }
@@ -100,6 +101,10 @@ function createMultiRepoController({
   function setState(nextState) {
     state = nextState;
     emit();
+  }
+  function getSelectedRepositories() {
+    const selected = state.repositories.filter((repoState) => repoState.isSelected);
+    return selected.length > 0 ? selected : state.repositories;
   }
   async function refreshRepo(repoRoot) {
     const repoIndex = state.repositories.findIndex(
@@ -194,7 +199,7 @@ function createMultiRepoController({
     let successCount = 0;
     let failureCount = 0;
     const details = [];
-    for (const repository of state.repositories) {
+    for (const repository of getSelectedRepositories()) {
       const result = await runner(repository.repo.rootPath);
       details.push(result);
       if (result.ok) {
@@ -293,7 +298,7 @@ function createMultiRepoController({
       await stageAllFilesForRepo(repoRoot);
     },
     async stageAll() {
-      for (const repository of state.repositories) {
+      for (const repository of getSelectedRepositories()) {
         await stageAllFilesForRepo(repository.repo.rootPath);
       }
     },
@@ -307,7 +312,7 @@ function createMultiRepoController({
       await runRepoMutation(repoRoot, () => gitService.discardRepo(repoRoot));
     },
     async discardAll() {
-      for (const repository of state.repositories) {
+      for (const repository of getSelectedRepositories()) {
         await runRepoMutation(
           repository.repo.rootPath,
           () => gitService.discardRepo(repository.repo.rootPath)
@@ -370,6 +375,14 @@ function createMultiRepoController({
         )
       });
     },
+    setRepoSelected(repoRoot, isSelected) {
+      setState({
+        ...state,
+        repositories: state.repositories.map(
+          (repoState) => repoState.repo.rootPath === repoRoot ? { ...repoState, isSelected } : repoState
+        )
+      });
+    },
     toggleRepoExpanded(repoRoot) {
       setState({
         ...state,
@@ -392,10 +405,17 @@ function toRelativeRepoInfo(vaultPath, repoRoot) {
   };
 }
 async function scanDirectory(currentPath, results) {
-  const entries = await (0, import_promises.readdir)(currentPath, { withFileTypes: true });
-  const hasGitDirectory = entries.some(
-    (entry) => entry.isDirectory() && entry.name === ".git"
-  );
+  let entries;
+  try {
+    entries = await (0, import_promises.readdir)(currentPath, { withFileTypes: true });
+  } catch (error) {
+    const code = typeof error === "object" && error && "code" in error ? String(error.code) : "";
+    if (code === "EACCES" || code === "EPERM" || code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  const hasGitDirectory = entries.some((entry) => entry.name === ".git");
   if (hasGitDirectory) {
     results.push(currentPath);
   }
@@ -1155,22 +1175,24 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
     this.commitInputState = void 0;
   }
   createHeaderAction(parent, action, state) {
+    const selectedCount = state.repositories.filter((repo) => repo.isSelected).length;
+    const bulkTargetLabel = selectedCount > 0 ? `${selectedCount} selected repositor${selectedCount === 1 ? "y" : "ies"}` : "all discovered repositories";
     const handlers = {
       refresh: async () => {
         await this.controller.refreshAll();
       },
       stageAll: async () => {
         await this.confirmDiscard(
-          "Stage all repository changes?",
-          "This will stage all unstaged and untracked files across every discovered repository.",
+          "Stage selected repository changes?",
+          `This will stage all unstaged and untracked files across ${bulkTargetLabel}.`,
           "stage",
           () => this.controller.stageAll()
         );
       },
       pull: async () => {
         await this.confirmDiscard(
-          "Pull all repositories?",
-          "This will run pull in every discovered repository one by one.",
+          "Pull selected repositories?",
+          `This will run pull in ${bulkTargetLabel} one by one.`,
           "pull",
           async () => {
             this.showBulkOperationNotice(await this.controller.pullAll());
@@ -1182,8 +1204,8 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
       },
       discard: async () => {
         await this.confirmDiscard(
-          "Discard all repository changes?",
-          "This will reset every discovered repository back to its current HEAD and remove untracked files.",
+          "Discard selected repository changes?",
+          `This will reset ${bulkTargetLabel} back to their current HEAD and remove untracked files.`,
           "discard",
           () => this.controller.discardAll()
         );
@@ -1278,6 +1300,16 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
     const headerSummary = header.createDiv(
       "git-extended__repo-summary git-extended__repo-summary--header"
     );
+    const selectedCount = state.repositories.filter((repo) => repo.isSelected).length;
+    const totalCount = state.repositories.length;
+    const selectionChip = headerSummary.createDiv(
+      "git-extended__summary-chip git-extended__summary-chip--selection"
+    );
+    selectionChip.createSpan({ cls: "git-extended__summary-chip-label", text: "Selected" });
+    selectionChip.createSpan({
+      cls: "git-extended__summary-chip-value",
+      text: totalCount === 0 ? "0" : `${selectedCount}/${totalCount}`
+    });
     for (const item of getGlobalSummaryItems(state.repositories)) {
       const chip = headerSummary.createDiv("git-extended__summary-chip");
       chip.createSpan({ cls: "git-extended__summary-chip-label", text: item.label });
@@ -1315,6 +1347,18 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
       });
       const headerTopRow2 = cardHeader.createDiv("git-extended__repo-header-top-row");
       const headerMain = headerTopRow2.createDiv("git-extended__repo-header-main");
+      const selectionToggle = headerMain.createEl("input", {
+        cls: "git-extended__repo-select",
+        type: "checkbox"
+      });
+      selectionToggle.checked = repoState.isSelected;
+      selectionToggle.disabled = repoState.isBusy;
+      selectionToggle.ariaLabel = `Select ${repoState.repo.relativePath || "repository"} for bulk actions`;
+      selectionToggle.addEventListener("click", (event) => event.stopPropagation());
+      selectionToggle.addEventListener("change", (event) => {
+        event.stopPropagation();
+        this.controller.setRepoSelected(repoState.repo.rootPath, selectionToggle.checked);
+      });
       headerMain.createDiv({
         cls: "git-extended__repo-toggle",
         text: repoState.isExpanded ? "\u25BE" : "\u25B8"

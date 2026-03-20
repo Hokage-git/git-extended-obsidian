@@ -42,6 +42,7 @@ export interface RepoState {
   commitMessage: string;
   isLoading: boolean;
   isBusy: boolean;
+  isSelected: boolean;
   isExpanded: boolean;
   lastError?: string;
 }
