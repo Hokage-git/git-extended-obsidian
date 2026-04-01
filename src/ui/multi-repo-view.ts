@@ -40,15 +40,18 @@ type MultiRepoController = {
   refreshAll(): Promise<void>;
   refreshRepo(repoRoot: string): Promise<void>;
   stageAll(): Promise<void>;
+  unstageAll(): Promise<void>;
   pullAll(): Promise<BulkOperationResult>;
   pushAll(): Promise<BulkOperationResult>;
   discardAll(): Promise<void>;
   stageAllInRepo(repoRoot: string): Promise<void>;
+  unstageAllInRepo(repoRoot: string): Promise<void>;
   stageFile(repoRoot: string, filePath: string): Promise<void>;
   unstageFile(repoRoot: string, filePath: string): Promise<void>;
   discardFile(repoRoot: string, filePath: string, tracked: boolean): Promise<void>;
   discardRepo(repoRoot: string): Promise<void>;
   commit(repoRoot: string): Promise<GitCommandResult | undefined>;
+  dropLocalCommit(repoRoot: string): Promise<GitCommandResult>;
   pull(repoRoot: string): Promise<RepoOperationResult>;
   push(repoRoot: string): Promise<RepoOperationResult>;
   setCommitMessage(repoRoot: string, value: string): void;
@@ -453,6 +456,18 @@ export class MultiRepoView extends ItemView {
     new Notice(result.ok ? `Committed ${repoPath}` : `Commit failed for ${repoPath}: ${result.stderr}`);
   }
 
+  private showDropLocalCommitNotice(repoRoot: string, result: GitCommandResult): void {
+    const repoState = this.controller
+      .getState()
+      .repositories.find((repo) => repo.repo.rootPath === repoRoot);
+    const repoPath = repoState?.repo.relativePath || ".";
+    new Notice(
+      result.ok
+        ? `Removed latest local commit in ${repoPath}`
+        : `Remove local commit failed for ${repoPath}: ${result.stderr}`
+    );
+  }
+
   private captureCommitInputState(): void {
     const activeElement = document.activeElement;
     if (!(activeElement instanceof HTMLInputElement)) {
@@ -512,6 +527,9 @@ export class MultiRepoView extends ItemView {
           () => this.controller.stageAll()
         );
       },
+      unstageAll: async () => {
+        await this.controller.unstageAll();
+      },
       pull: async () => {
         await this.confirmDiscard(
           "Pull selected repositories?",
@@ -538,6 +556,7 @@ export class MultiRepoView extends ItemView {
     const labels: Record<RepoActionId, string> = {
       refresh: "Refresh all repositories",
       stageAll: "Stage all repositories",
+      unstageAll: "Unstage all repositories",
       pull: "Pull all repositories",
       push: "Push all repositories",
       discard: "Discard all repositories"
@@ -571,9 +590,11 @@ export class MultiRepoView extends ItemView {
     const labels: Record<RepoActionId, string> = {
       refresh: "Refresh repository",
       stageAll: "Stage all files in repository",
+      unstageAll: "Unstage all files in repository",
       pull: "Pull repository",
       push: "Push repository",
-      discard: "Discard repository"
+      discard: "Discard repository",
+      dropLocalCommit: "Remove latest local commit"
     };
 
     const handlers: Record<RepoActionId, () => Promise<void>> = {
@@ -583,11 +604,27 @@ export class MultiRepoView extends ItemView {
       stageAll: async () => {
         await this.controller.stageAllInRepo(repoRoot);
       },
+      unstageAll: async () => {
+        await this.controller.unstageAllInRepo(repoRoot);
+      },
       pull: async () => {
         this.showRepoOperationNotice(await this.controller.pull(repoRoot));
       },
       push: async () => {
         this.showRepoOperationNotice(await this.controller.push(repoRoot));
+      },
+      dropLocalCommit: async () => {
+        await this.confirmDiscard(
+          `Remove latest local commit in ${state.repo.relativePath || "."}?`,
+          "This will remove the latest local commit and move its changes back to unstaged files.",
+          "discard",
+          async () => {
+            this.showDropLocalCommitNotice(
+              repoRoot,
+              await this.controller.dropLocalCommit(repoRoot)
+            );
+          }
+        );
       },
       discard: async () => {
         await this.confirmDiscard(
@@ -609,7 +646,7 @@ export class MultiRepoView extends ItemView {
       }
     );
 
-    if (action === "discard") {
+    if (action === "discard" || action === "dropLocalCommit") {
       button.addClass("mod-warning");
     }
     button.addEventListener("click", (event) => event.stopPropagation());

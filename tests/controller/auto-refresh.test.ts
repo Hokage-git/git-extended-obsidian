@@ -46,6 +46,7 @@ describe("multi repo controller refresh", () => {
         commit: vi.fn(),
         discardFile: vi.fn(),
         discardRepo: vi.fn(),
+        dropLocalCommit: vi.fn(),
         getStatus,
         pull: vi.fn(),
         push: vi.fn(),

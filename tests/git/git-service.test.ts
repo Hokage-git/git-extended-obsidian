@@ -52,12 +52,7 @@ describe("createGitService", () => {
       .mockResolvedValueOnce({
         exitCode: 0,
         stderr: "",
-        stdout: "abc123\n"
-      })
-      .mockResolvedValueOnce({
-        exitCode: 0,
-        stderr: "",
-        stdout: "abc123\n"
+        stdout: "0\n"
       });
 
     const service = createGitService(runner);
@@ -72,16 +67,11 @@ describe("createGitService", () => {
     expect(runner).toHaveBeenNthCalledWith(2, "C:/vault/repo", [
       "-c",
       "core.quotepath=false",
-      "rev-parse",
-      "HEAD"
+      "rev-list",
+      "--count",
+      "HEAD..@{u}"
     ]);
-    expect(runner).toHaveBeenNthCalledWith(3, "C:/vault/repo", [
-      "-c",
-      "core.quotepath=false",
-      "rev-parse",
-      "@{u}"
-    ]);
-    expect(runner).toHaveBeenCalledTimes(3);
+    expect(runner).toHaveBeenCalledTimes(2);
     expect(result.ok).toBe(true);
     expect(result.data?.status).toBe("upToDate");
   });
@@ -97,27 +87,40 @@ describe("createGitService", () => {
       .mockResolvedValueOnce({
         exitCode: 0,
         stderr: "",
-        stdout: "abc123\n"
+        stdout: "2\n"
       })
       .mockResolvedValueOnce({
         exitCode: 0,
         stderr: "",
-        stdout: "def456\n"
+        stdout: ["A\tnew-file.md", "M\texisting.ts", "D\tremoved.md"].join("\n")
       })
       .mockResolvedValueOnce({
         exitCode: 0,
         stderr: "",
-        stdout: ["Updating abc123..def456", "A\tnew-file.md", "M\texisting.ts", "D\tremoved.md"].join("\n")
+        stdout: "Updating abc123..def456"
       });
 
     const service = createGitService(runner);
     const result = await service.pull("C:/vault/repo");
 
+    expect(runner).toHaveBeenNthCalledWith(2, "C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
+      "rev-list",
+      "--count",
+      "HEAD..@{u}"
+    ]);
+    expect(runner).toHaveBeenNthCalledWith(3, "C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
+      "diff",
+      "--name-status",
+      "HEAD..@{u}"
+    ]);
     expect(runner).toHaveBeenNthCalledWith(4, "C:/vault/repo", [
       "-c",
       "core.quotepath=false",
-      "pull",
-      "--name-status"
+      "pull"
     ]);
     expect(result.ok).toBe(true);
     expect(result.data?.status).toBe("pulled");
@@ -126,6 +129,42 @@ describe("createGitService", () => {
       { path: "existing.ts", kind: "updated" },
       { path: "removed.md", kind: "deleted" }
     ]);
+  });
+
+  it("skips pull when local branch is ahead but there are no incoming commits", async () => {
+    const runner = vi
+      .fn()
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: ""
+      })
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stderr: "",
+        stdout: "0\n"
+      });
+
+    const service = createGitService(runner);
+    const result = await service.pull("C:/vault/repo");
+
+    expect(runner).toHaveBeenNthCalledWith(1, "C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
+      "fetch",
+      "--quiet"
+    ]);
+    expect(runner).toHaveBeenNthCalledWith(2, "C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
+      "rev-list",
+      "--count",
+      "HEAD..@{u}"
+    ]);
+    expect(runner).toHaveBeenCalledTimes(2);
+    expect(result.ok).toBe(true);
+    expect(result.data?.status).toBe("upToDate");
+    expect(result.data?.files).toEqual([]);
   });
 
   it("discards tracked files with restore staged and worktree", async () => {
@@ -214,5 +253,26 @@ describe("createGitService", () => {
     expect(result.ok).toBe(true);
     expect(result.stdout).toContain("HEAD is now at");
     expect(result.stdout).toContain("Removing note.md");
+  });
+
+  it("drops the latest local commit with mixed reset", async () => {
+    const runner = vi.fn().mockResolvedValue({
+      exitCode: 0,
+      stderr: "",
+      stdout: "Unstaged changes after reset"
+    });
+
+    const service = createGitService(runner);
+    const result = await service.dropLocalCommit("C:/vault/repo");
+
+    expect(runner).toHaveBeenCalledWith("C:/vault/repo", [
+      "-c",
+      "core.quotepath=false",
+      "reset",
+      "--mixed",
+      "HEAD~1"
+    ]);
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toContain("Unstaged changes after reset");
   });
 });

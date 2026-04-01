@@ -248,6 +248,39 @@ function createMultiRepoController({
     }
     await refreshRepo(repoRoot);
   }
+  async function unstageAllFilesForRepo(repoRoot) {
+    const repo = state.repositories.find((repoState) => repoState.repo.rootPath === repoRoot);
+    if (!repo || repo.isBusy) {
+      return;
+    }
+    const filesToUnstage = repo.staged.map((file) => file.path);
+    if (filesToUnstage.length === 0) {
+      return;
+    }
+    const repoIndex = state.repositories.findIndex(
+      (repoState) => repoState.repo.rootPath === repoRoot
+    );
+    const repositories = [...state.repositories];
+    repositories[repoIndex] = {
+      ...repo,
+      isBusy: true,
+      lastError: void 0
+    };
+    setState({ ...state, repositories });
+    for (const filePath of filesToUnstage) {
+      const result = await gitService.unstageFile(repoRoot, filePath);
+      if (!result.ok) {
+        repositories[repoIndex] = {
+          ...repositories[repoIndex],
+          isBusy: false,
+          lastError: result.stderr || "Git command failed."
+        };
+        setState({ ...state, repositories });
+        return;
+      }
+    }
+    await refreshRepo(repoRoot);
+  }
   return {
     subscribe(listener) {
       listeners.add(listener);
@@ -302,6 +335,14 @@ function createMultiRepoController({
         await stageAllFilesForRepo(repository.repo.rootPath);
       }
     },
+    async unstageAllInRepo(repoRoot) {
+      await unstageAllFilesForRepo(repoRoot);
+    },
+    async unstageAll() {
+      for (const repository of getSelectedRepositories()) {
+        await unstageAllFilesForRepo(repository.repo.rootPath);
+      }
+    },
     async discardFile(repoRoot, filePath, tracked) {
       await runRepoMutation(
         repoRoot,
@@ -342,6 +383,9 @@ function createMultiRepoController({
       );
       setState({ ...state, repositories });
       return result;
+    },
+    async dropLocalCommit(repoRoot) {
+      return runRepoMutation(repoRoot, () => gitService.dropLocalCommit(repoRoot));
     },
     async pull(repoRoot) {
       const result = await runRepoMutation(repoRoot, () => gitService.pull(repoRoot));
@@ -446,9 +490,54 @@ function parseBranch(line) {
 function normalizePath(rawPath) {
   const renamedMarker = " -> ";
   if (rawPath.includes(renamedMarker)) {
-    return rawPath.split(renamedMarker)[1] ?? rawPath;
+    return decodePorcelainPath(rawPath.split(renamedMarker)[1] ?? rawPath);
   }
-  return rawPath;
+  return decodePorcelainPath(rawPath);
+}
+function decodePorcelainPath(rawPath) {
+  if (rawPath.length < 2 || rawPath[0] !== `"` || rawPath[rawPath.length - 1] !== `"`) {
+    return rawPath;
+  }
+  const bytes = [];
+  function appendText(value) {
+    bytes.push(...Buffer.from(value, "utf8"));
+  }
+  for (let index = 1; index < rawPath.length - 1; index += 1) {
+    const current = rawPath[index];
+    if (current !== "\\") {
+      appendText(current);
+      continue;
+    }
+    const next = rawPath[index + 1];
+    if (next === void 0) {
+      appendText("\\");
+      continue;
+    }
+    if (next === "\\" || next === `"`) {
+      appendText(next);
+      index += 1;
+      continue;
+    }
+    if (next === "t") {
+      appendText("	");
+      index += 1;
+      continue;
+    }
+    if (next === "n") {
+      appendText("\n");
+      index += 1;
+      continue;
+    }
+    const octal = rawPath.slice(index + 1, index + 4);
+    if (/^[0-7]{3}$/.test(octal)) {
+      bytes.push(Number.parseInt(octal, 8));
+      index += 3;
+      continue;
+    }
+    appendText(next);
+    index += 1;
+  }
+  return Buffer.from(bytes).toString("utf8");
 }
 function toKind(code) {
   switch (code) {
@@ -582,20 +671,24 @@ function createGitService(runner = defaultRunner, dependencies = {}) {
         await runner(repoRoot, withDefaultGitConfig(["commit", "-m", message]))
       );
     },
+    async dropLocalCommit(repoRoot) {
+      return toCommandResult(
+        await runner(repoRoot, withDefaultGitConfig(["reset", "--mixed", "HEAD~1"]))
+      );
+    },
     async pull(repoRoot) {
       const fetchResult = await runner(repoRoot, withDefaultGitConfig(["fetch", "--quiet"]));
       if (fetchResult.exitCode !== 0) {
         return toCommandResult(fetchResult);
       }
-      const headResult = await runner(repoRoot, withDefaultGitConfig(["rev-parse", "HEAD"]));
-      if (headResult.exitCode !== 0) {
-        return toCommandResult(headResult);
+      const incomingCountResult = await runner(
+        repoRoot,
+        withDefaultGitConfig(["rev-list", "--count", "HEAD..@{u}"])
+      );
+      if (incomingCountResult.exitCode !== 0) {
+        return toCommandResult(incomingCountResult);
       }
-      const upstreamResult = await runner(repoRoot, withDefaultGitConfig(["rev-parse", "@{u}"]));
-      if (upstreamResult.exitCode !== 0) {
-        return toCommandResult(upstreamResult);
-      }
-      if (headResult.stdout.trim() === upstreamResult.stdout.trim()) {
+      if ((Number.parseInt(incomingCountResult.stdout.trim(), 10) || 0) === 0) {
         return {
           ok: true,
           stdout: fetchResult.stdout,
@@ -606,10 +699,17 @@ function createGitService(runner = defaultRunner, dependencies = {}) {
           }
         };
       }
-      const pullResult = await runner(repoRoot, withDefaultGitConfig(["pull", "--name-status"]));
+      const diffResult = await runner(
+        repoRoot,
+        withDefaultGitConfig(["diff", "--name-status", "HEAD..@{u}"])
+      );
+      if (diffResult.exitCode !== 0) {
+        return toCommandResult(diffResult);
+      }
+      const pullResult = await runner(repoRoot, withDefaultGitConfig(["pull"]));
       return toCommandResult(pullResult, {
         status: "pulled",
-        files: pullResult.exitCode === 0 ? parsePullNameStatus(pullResult.stdout) : []
+        files: pullResult.exitCode === 0 ? parsePullNameStatus(diffResult.stdout) : []
       });
     },
     async push(repoRoot) {
@@ -824,6 +924,7 @@ function syncDismissibleErrorState(current, message) {
 var GLOBAL_REPO_ACTIONS = [
   "refresh",
   "stageAll",
+  "unstageAll",
   "pull",
   "push",
   "discard"
@@ -831,16 +932,20 @@ var GLOBAL_REPO_ACTIONS = [
 var REPO_ACTIONS = [
   "refresh",
   "stageAll",
+  "unstageAll",
   "pull",
   "push",
+  "dropLocalCommit",
   "discard"
 ];
 var ACTION_ICONS = {
   refresh: "refresh-cw",
   stageAll: "plus",
+  unstageAll: "minus",
   pull: "download",
   push: "upload",
-  discard: "trash-2"
+  discard: "trash-2",
+  dropLocalCommit: "undo-2"
 };
 function getActionIcon(action) {
   return ACTION_ICONS[action];
@@ -1144,6 +1249,13 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
     const repoPath = repoState?.repo.relativePath || ".";
     new import_obsidian2.Notice(result.ok ? `Committed ${repoPath}` : `Commit failed for ${repoPath}: ${result.stderr}`);
   }
+  showDropLocalCommitNotice(repoRoot, result) {
+    const repoState = this.controller.getState().repositories.find((repo) => repo.repo.rootPath === repoRoot);
+    const repoPath = repoState?.repo.relativePath || ".";
+    new import_obsidian2.Notice(
+      result.ok ? `Removed latest local commit in ${repoPath}` : `Remove local commit failed for ${repoPath}: ${result.stderr}`
+    );
+  }
   captureCommitInputState() {
     const activeElement = document.activeElement;
     if (!(activeElement instanceof HTMLInputElement)) {
@@ -1189,6 +1301,9 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
           () => this.controller.stageAll()
         );
       },
+      unstageAll: async () => {
+        await this.controller.unstageAll();
+      },
       pull: async () => {
         await this.confirmDiscard(
           "Pull selected repositories?",
@@ -1214,6 +1329,7 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
     const labels = {
       refresh: "Refresh all repositories",
       stageAll: "Stage all repositories",
+      unstageAll: "Unstage all repositories",
       pull: "Pull all repositories",
       push: "Push all repositories",
       discard: "Discard all repositories"
@@ -1240,9 +1356,11 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
     const labels = {
       refresh: "Refresh repository",
       stageAll: "Stage all files in repository",
+      unstageAll: "Unstage all files in repository",
       pull: "Pull repository",
       push: "Push repository",
-      discard: "Discard repository"
+      discard: "Discard repository",
+      dropLocalCommit: "Remove latest local commit"
     };
     const handlers = {
       refresh: async () => {
@@ -1251,11 +1369,27 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
       stageAll: async () => {
         await this.controller.stageAllInRepo(repoRoot);
       },
+      unstageAll: async () => {
+        await this.controller.unstageAllInRepo(repoRoot);
+      },
       pull: async () => {
         this.showRepoOperationNotice(await this.controller.pull(repoRoot));
       },
       push: async () => {
         this.showRepoOperationNotice(await this.controller.push(repoRoot));
+      },
+      dropLocalCommit: async () => {
+        await this.confirmDiscard(
+          `Remove latest local commit in ${state.repo.relativePath || "."}?`,
+          "This will remove the latest local commit and move its changes back to unstaged files.",
+          "discard",
+          async () => {
+            this.showDropLocalCommitNotice(
+              repoRoot,
+              await this.controller.dropLocalCommit(repoRoot)
+            );
+          }
+        );
       },
       discard: async () => {
         await this.confirmDiscard(
@@ -1275,7 +1409,7 @@ var MultiRepoView = class extends import_obsidian2.ItemView {
         await handlers[action]();
       }
     );
-    if (action === "discard") {
+    if (action === "discard" || action === "dropLocalCommit") {
       button.addClass("mod-warning");
     }
     button.addEventListener("click", (event) => event.stopPropagation());

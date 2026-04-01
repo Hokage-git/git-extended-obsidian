@@ -138,23 +138,27 @@ export function createGitService(
       );
     },
 
+    async dropLocalCommit(repoRoot: string): Promise<GitCommandResult> {
+      return toCommandResult(
+        await runner(repoRoot, withDefaultGitConfig(["reset", "--mixed", "HEAD~1"]))
+      );
+    },
+
     async pull(repoRoot: string): Promise<GitCommandResult<PullResultData>> {
       const fetchResult = await runner(repoRoot, withDefaultGitConfig(["fetch", "--quiet"]));
       if (fetchResult.exitCode !== 0) {
         return toCommandResult(fetchResult);
       }
 
-      const headResult = await runner(repoRoot, withDefaultGitConfig(["rev-parse", "HEAD"]));
-      if (headResult.exitCode !== 0) {
-        return toCommandResult(headResult);
+      const incomingCountResult = await runner(
+        repoRoot,
+        withDefaultGitConfig(["rev-list", "--count", "HEAD..@{u}"])
+      );
+      if (incomingCountResult.exitCode !== 0) {
+        return toCommandResult(incomingCountResult);
       }
 
-      const upstreamResult = await runner(repoRoot, withDefaultGitConfig(["rev-parse", "@{u}"]));
-      if (upstreamResult.exitCode !== 0) {
-        return toCommandResult(upstreamResult);
-      }
-
-      if (headResult.stdout.trim() === upstreamResult.stdout.trim()) {
+      if ((Number.parseInt(incomingCountResult.stdout.trim(), 10) || 0) === 0) {
         return {
           ok: true,
           stdout: fetchResult.stdout,
@@ -166,10 +170,18 @@ export function createGitService(
         };
       }
 
-      const pullResult = await runner(repoRoot, withDefaultGitConfig(["pull", "--name-status"]));
+      const diffResult = await runner(
+        repoRoot,
+        withDefaultGitConfig(["diff", "--name-status", "HEAD..@{u}"])
+      );
+      if (diffResult.exitCode !== 0) {
+        return toCommandResult(diffResult);
+      }
+
+      const pullResult = await runner(repoRoot, withDefaultGitConfig(["pull"]));
       return toCommandResult(pullResult, {
         status: "pulled",
-        files: pullResult.exitCode === 0 ? parsePullNameStatus(pullResult.stdout) : []
+        files: pullResult.exitCode === 0 ? parsePullNameStatus(diffResult.stdout) : []
       });
     },
 

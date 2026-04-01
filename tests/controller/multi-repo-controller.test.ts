@@ -46,6 +46,7 @@ describe("createMultiRepoController", () => {
         commit: vi.fn(),
         discardFile: vi.fn(),
         discardRepo: vi.fn(),
+        dropLocalCommit: vi.fn(),
         getStatus,
         pull: vi.fn(),
         push: vi.fn(),
@@ -111,6 +112,7 @@ describe("createMultiRepoController", () => {
         commit: vi.fn(),
         discardFile: vi.fn(),
         discardRepo: vi.fn(),
+        dropLocalCommit: vi.fn(),
         getStatus,
         pull: vi.fn(),
         push: vi.fn(),
@@ -142,6 +144,7 @@ describe("createMultiRepoController", () => {
         commit: vi.fn(),
         discardFile: vi.fn(),
         discardRepo: vi.fn(),
+        dropLocalCommit: vi.fn(),
         getStatus: vi
           .fn()
           .mockResolvedValueOnce({
@@ -211,6 +214,7 @@ describe("createMultiRepoController", () => {
         commit: vi.fn(),
         discardFile,
         discardRepo: vi.fn(),
+        dropLocalCommit: vi.fn(),
         getStatus,
         pull: vi.fn(),
         push: vi.fn(),
@@ -252,6 +256,7 @@ describe("createMultiRepoController", () => {
         commit: vi.fn(),
         discardFile: vi.fn(),
         discardRepo,
+        dropLocalCommit: vi.fn(),
         getStatus,
         pull: vi.fn(),
         push: vi.fn(),
@@ -304,6 +309,7 @@ describe("createMultiRepoController", () => {
         commit: vi.fn(),
         discardFile: vi.fn(),
         discardRepo: vi.fn(),
+        dropLocalCommit: vi.fn(),
         getStatus,
         pull: vi.fn(),
         push: vi.fn(),
@@ -375,6 +381,7 @@ describe("createMultiRepoController", () => {
         commit: vi.fn(),
         discardFile: vi.fn(),
         discardRepo: vi.fn(),
+        dropLocalCommit: vi.fn(),
         getStatus,
         pull,
         push: vi.fn(),
@@ -392,6 +399,130 @@ describe("createMultiRepoController", () => {
     expect(stageFile).toHaveBeenNthCalledWith(2, "C:/vault/beta", "draft.md");
     expect(pull).toHaveBeenNthCalledWith(1, "C:/vault/alpha");
     expect(pull).toHaveBeenNthCalledWith(2, "C:/vault/beta");
+  });
+
+  it("unstages all staged files in one repository and refreshes once", async () => {
+    const repositories: RepoInfo[] = [
+      { branch: "", relativePath: "alpha", rootPath: "C:/vault/alpha" }
+    ];
+    const getStatus = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: {
+          branch: "main",
+          staged: [
+            { kind: "modified", path: "tracked.ts", x: "M", y: " " },
+            { kind: "modified", path: "draft.md", x: "A", y: " " }
+          ],
+          unstaged: [],
+          untracked: []
+        }
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: createStatus("main", 0)
+      });
+    const unstageFile = vi.fn().mockResolvedValue({
+      ok: true,
+      stderr: "",
+      stdout: ""
+    });
+
+    const controller = createMultiRepoController({
+      discoverRepositories: vi.fn().mockResolvedValue(repositories),
+      gitService: {
+        checkGitAvailability: vi.fn().mockResolvedValue(true),
+        commit: vi.fn(),
+        discardFile: vi.fn(),
+        discardRepo: vi.fn(),
+        dropLocalCommit: vi.fn(),
+        getStatus,
+        pull: vi.fn(),
+        push: vi.fn(),
+        stageFile: vi.fn(),
+        unstageFile
+      },
+      vaultPath: "C:/vault"
+    });
+
+    await controller.load();
+    await controller.unstageAllInRepo("C:/vault/alpha");
+
+    expect(unstageFile).toHaveBeenNthCalledWith(1, "C:/vault/alpha", "tracked.ts");
+    expect(unstageFile).toHaveBeenNthCalledWith(2, "C:/vault/alpha", "draft.md");
+    expect(getStatus).toHaveBeenCalledTimes(2);
+    expect(controller.getState().repositories[0]?.staged).toHaveLength(0);
+  });
+
+  it("runs unstage all only for selected repositories", async () => {
+    const repositories: RepoInfo[] = [
+      { branch: "", relativePath: "alpha", rootPath: "C:/vault/alpha" },
+      { branch: "", relativePath: "beta", rootPath: "C:/vault/beta" }
+    ];
+    const getStatus = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: {
+          branch: "main",
+          staged: [{ kind: "modified", path: "tracked.ts", x: "M", y: " " }],
+          unstaged: [],
+          untracked: []
+        }
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: {
+          branch: "develop",
+          staged: [{ kind: "modified", path: "draft.md", x: "M", y: " " }],
+          unstaged: [],
+          untracked: []
+        }
+      })
+      .mockResolvedValue({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: createStatus("main", 0)
+      });
+    const unstageFile = vi.fn().mockResolvedValue({
+      ok: true,
+      stderr: "",
+      stdout: ""
+    });
+
+    const controller = createMultiRepoController({
+      discoverRepositories: vi.fn().mockResolvedValue(repositories),
+      gitService: {
+        checkGitAvailability: vi.fn().mockResolvedValue(true),
+        commit: vi.fn(),
+        discardFile: vi.fn(),
+        discardRepo: vi.fn(),
+        dropLocalCommit: vi.fn(),
+        getStatus,
+        pull: vi.fn(),
+        push: vi.fn(),
+        stageFile: vi.fn(),
+        unstageFile
+      },
+      vaultPath: "C:/vault"
+    });
+
+    await controller.load();
+    controller.setRepoSelected("C:/vault/beta", false);
+    await controller.unstageAll();
+
+    expect(unstageFile).toHaveBeenCalledTimes(1);
+    expect(unstageFile).toHaveBeenCalledWith("C:/vault/alpha", "tracked.ts");
   });
 
   it("runs bulk actions only for selected repositories", async () => {
@@ -461,6 +592,7 @@ describe("createMultiRepoController", () => {
         commit: vi.fn(),
         discardFile: vi.fn(),
         discardRepo,
+        dropLocalCommit: vi.fn(),
         getStatus,
         pull,
         push,
@@ -524,6 +656,7 @@ describe("createMultiRepoController", () => {
         commit,
         discardFile: vi.fn(),
         discardRepo: vi.fn(),
+        dropLocalCommit: vi.fn(),
         getStatus,
         pull: vi.fn(),
         push: vi.fn(),
@@ -538,6 +671,62 @@ describe("createMultiRepoController", () => {
     await controller.commit("C:/vault/alpha");
 
     expect(commit).toHaveBeenCalledWith("C:/vault/alpha", "update: 2026-03-16 18:05");
+  });
+
+  it("drops the latest local commit and refreshes the repository state", async () => {
+    const repositories: RepoInfo[] = [
+      { branch: "", relativePath: "alpha", rootPath: "C:/vault/alpha" }
+    ];
+    const getStatus = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: createStatus("main", 0)
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        stderr: "",
+        stdout: "",
+        data: {
+          branch: "main",
+          staged: [],
+          unstaged: [{ kind: "modified", path: "note.md", x: " ", y: "M" }],
+          untracked: []
+        }
+      });
+    const dropLocalCommit = vi.fn().mockResolvedValue({
+      ok: true,
+      stderr: "",
+      stdout: "Unstaged changes after reset"
+    });
+
+    const controller = createMultiRepoController({
+      discoverRepositories: vi.fn().mockResolvedValue(repositories),
+      gitService: {
+        checkGitAvailability: vi.fn().mockResolvedValue(true),
+        commit: vi.fn(),
+        discardFile: vi.fn(),
+        discardRepo: vi.fn(),
+        dropLocalCommit,
+        getStatus,
+        pull: vi.fn(),
+        push: vi.fn(),
+        stageFile: vi.fn(),
+        unstageFile: vi.fn()
+      },
+      vaultPath: "C:/vault"
+    });
+
+    await controller.load();
+    await controller.dropLocalCommit("C:/vault/alpha");
+
+    expect(dropLocalCommit).toHaveBeenCalledWith("C:/vault/alpha");
+    expect(getStatus).toHaveBeenCalledTimes(2);
+    expect(controller.getState().repositories[0]?.unstaged).toEqual([
+      { kind: "modified", path: "note.md", x: " ", y: "M" }
+    ]);
   });
 
   it("stores pulled file changes for a repository after pull", async () => {
@@ -579,6 +768,7 @@ describe("createMultiRepoController", () => {
         commit: vi.fn(),
         discardFile: vi.fn(),
         discardRepo: vi.fn(),
+        dropLocalCommit: vi.fn(),
         getStatus,
         pull,
         push: vi.fn(),
@@ -644,6 +834,7 @@ describe("createMultiRepoController", () => {
         commit: vi.fn(),
         discardFile: vi.fn(),
         discardRepo: vi.fn(),
+        dropLocalCommit: vi.fn(),
         getStatus,
         pull,
         push: vi.fn(),

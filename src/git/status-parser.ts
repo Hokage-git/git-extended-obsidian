@@ -9,10 +9,66 @@ function parseBranch(line: string): string {
 function normalizePath(rawPath: string): string {
   const renamedMarker = " -> ";
   if (rawPath.includes(renamedMarker)) {
-    return rawPath.split(renamedMarker)[1] ?? rawPath;
+    return decodePorcelainPath(rawPath.split(renamedMarker)[1] ?? rawPath);
   }
 
-  return rawPath;
+  return decodePorcelainPath(rawPath);
+}
+
+function decodePorcelainPath(rawPath: string): string {
+  if (rawPath.length < 2 || rawPath[0] !== `"` || rawPath[rawPath.length - 1] !== `"`) {
+    return rawPath;
+  }
+
+  const bytes: number[] = [];
+
+  function appendText(value: string): void {
+    bytes.push(...Buffer.from(value, "utf8"));
+  }
+
+  for (let index = 1; index < rawPath.length - 1; index += 1) {
+    const current = rawPath[index];
+    if (current !== "\\") {
+      appendText(current);
+      continue;
+    }
+
+    const next = rawPath[index + 1];
+    if (next === undefined) {
+      appendText("\\");
+      continue;
+    }
+
+    if (next === "\\" || next === `"`) {
+      appendText(next);
+      index += 1;
+      continue;
+    }
+
+    if (next === "t") {
+      appendText("\t");
+      index += 1;
+      continue;
+    }
+
+    if (next === "n") {
+      appendText("\n");
+      index += 1;
+      continue;
+    }
+
+    const octal = rawPath.slice(index + 1, index + 4);
+    if (/^[0-7]{3}$/.test(octal)) {
+      bytes.push(Number.parseInt(octal, 8));
+      index += 3;
+      continue;
+    }
+
+    appendText(next);
+    index += 1;
+  }
+
+  return Buffer.from(bytes).toString("utf8");
 }
 
 function toKind(code: string): RepoFileChange["kind"] {

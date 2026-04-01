@@ -24,6 +24,7 @@ type GitService = {
   ): Promise<GitCommandResult>;
   discardRepo(repoRoot: string): Promise<GitCommandResult>;
   commit(repoRoot: string, message: string): Promise<GitCommandResult>;
+  dropLocalCommit(repoRoot: string): Promise<GitCommandResult>;
   pull(repoRoot: string): Promise<GitCommandResult<PullResultData>>;
   push(repoRoot: string): Promise<GitCommandResult>;
 };
@@ -287,6 +288,44 @@ export function createMultiRepoController({
     await refreshRepo(repoRoot);
   }
 
+  async function unstageAllFilesForRepo(repoRoot: string): Promise<void> {
+    const repo = state.repositories.find((repoState) => repoState.repo.rootPath === repoRoot);
+    if (!repo || repo.isBusy) {
+      return;
+    }
+
+    const filesToUnstage = repo.staged.map((file) => file.path);
+    if (filesToUnstage.length === 0) {
+      return;
+    }
+
+    const repoIndex = state.repositories.findIndex(
+      (repoState) => repoState.repo.rootPath === repoRoot
+    );
+    const repositories = [...state.repositories];
+    repositories[repoIndex] = {
+      ...repo,
+      isBusy: true,
+      lastError: undefined
+    };
+    setState({ ...state, repositories });
+
+    for (const filePath of filesToUnstage) {
+      const result = await gitService.unstageFile(repoRoot, filePath);
+      if (!result.ok) {
+        repositories[repoIndex] = {
+          ...repositories[repoIndex],
+          isBusy: false,
+          lastError: result.stderr || "Git command failed."
+        };
+        setState({ ...state, repositories });
+        return;
+      }
+    }
+
+    await refreshRepo(repoRoot);
+  }
+
   return {
     subscribe(listener: StateListener): () => void {
       listeners.add(listener);
@@ -352,6 +391,16 @@ export function createMultiRepoController({
       }
     },
 
+    async unstageAllInRepo(repoRoot: string): Promise<void> {
+      await unstageAllFilesForRepo(repoRoot);
+    },
+
+    async unstageAll(): Promise<void> {
+      for (const repository of getSelectedRepositories()) {
+        await unstageAllFilesForRepo(repository.repo.rootPath);
+      }
+    },
+
     async discardFile(
       repoRoot: string,
       filePath: string,
@@ -403,6 +452,10 @@ export function createMultiRepoController({
       );
       setState({ ...state, repositories });
       return result;
+    },
+
+    async dropLocalCommit(repoRoot: string): Promise<GitCommandResult> {
+      return runRepoMutation(repoRoot, () => gitService.dropLocalCommit(repoRoot));
     },
 
     async pull(repoRoot: string): Promise<RepoOperationResult> {
